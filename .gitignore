@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (runtime generated)
+data/*.db
+data/temp/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Old docs (deprecated)
+old/
+
+# Bill templates (may contain sensitive data)
+账单模板/
+
+# Test scripts
+test_upload.py
+scripts/test_*.py
+
+# IDE assistant files
+find-skills.md
+CLAUDE.md

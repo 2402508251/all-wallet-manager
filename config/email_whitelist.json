@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "whitelist": [
+    {
+      "sender_domain": "weixin.qq.com",
+      "channel": "wechat",
+      "subject_keywords": ["微信支付", "账单", "明细"],
+      "attachment_types": [".xlsx", ".csv", ".zip"]
+    },
+    {
+      "sender_domain": "alipay.com",
+      "channel": "alipay",
+      "subject_keywords": ["支付宝", "交易", "明细"],
+      "attachment_types": [".csv", ".xlsx", ".zip"]
+    },
+    {
+      "sender_domain": "ccb.com",
+      "channel": "ccb",
+      "subject_keywords": ["建设银行", "账单", "明细"],
+      "attachment_types": [".xls", ".pdf", ".zip"]
+    }
+  ],
+  "subject_keyword_any": true,
+  "max_email_age_days": 365
+}

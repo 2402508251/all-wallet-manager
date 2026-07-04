@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "category_name": "餐饮美食",
+      "keywords": [
+        { "keyword": "餐", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "饭", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "外卖", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "美团", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "饿了么", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "肯德基", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "麦当劳", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "星巴克", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "瑞幸", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "奶茶", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "火锅", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "烧烤", "match_field": "counterparty", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "交通出行",
+      "keywords": [
+        { "keyword": "滴滴", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "地铁", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "加油", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "停车", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "高速", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "出租车", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "公交", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "铁路", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "12306", "match_field": "counterparty", "priority": 9 },
+        { "keyword": "航空", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "携程", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "ETC", "match_field": "product_desc", "priority": 7 }
+      ]
+    },
+    {
+      "category_name": "购物消费",
+      "keywords": [
+        { "keyword": "淘宝", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "京东", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "天猫", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "拼多多", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "苏宁", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "唯品会", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "抖音", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "快手", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "超市", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "便利店", "match_field": "counterparty", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "生活缴费",
+      "keywords": [
+        { "keyword": "电费", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "水费", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "燃气", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "物业", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "供暖", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "宽带", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "有线电视", "match_field": "product_desc", "priority": 6 }
+      ]
+    },
+    {
+      "category_name": "通讯网络",
+      "keywords": [
+        { "keyword": "中国移动", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "中国联通", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "中国电信", "match_field": "counterparty", "priority": 8 },
+        { "keyword": "话费", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "流量", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "充值中心", "match_field": "counterparty", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "医疗健康",
+      "keywords": [
+        { "keyword": "医院", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "诊所", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "药房", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "药店", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "体检", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "挂号", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "医保", "match_field": "counterparty", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "教育学习",
+      "keywords": [
+        { "keyword": "学校", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "培训", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "课程", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "学费", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "教育", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "书店", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "考试", "match_field": "product_desc", "priority": 6 }
+      ]
+    },
+    {
+      "category_name": "休闲娱乐",
+      "keywords": [
+        { "keyword": "电影", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "游戏", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "KTV", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "健身", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "旅游", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "酒店", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "景区", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "门票", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "腾讯视频", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "爱奇艺", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "网易云音乐", "match_field": "counterparty", "priority": 5 },
+        { "keyword": "QQ会员", "match_field": "product_desc", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "居住房租",
+      "keywords": [
+        { "keyword": "房租", "match_field": "product_desc", "priority": 9 },
+        { "keyword": "租金", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "中介", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "装修", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "家电", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "家具", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "维修", "match_field": "product_desc", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "金融保险",
+      "keywords": [
+        { "keyword": "保险", "match_field": "counterparty", "priority": 7 },
+        { "keyword": "理财", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "基金", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "股票", "match_field": "counterparty", "priority": 6 },
+        { "keyword": "贷款", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "利息", "match_field": "product_desc", "priority": 6 },
+        { "keyword": "还款", "match_field": "product_desc", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "人情往来",
+      "keywords": [
+        { "keyword": "红包", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "礼金", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "份子钱", "match_field": "product_desc", "priority": 8 },
+        { "keyword": "随礼", "match_field": "product_desc", "priority": 7 },
+        { "keyword": "请客", "match_field": "product_desc", "priority": 5 },
+        { "keyword": "生日", "match_field": "product_desc", "priority": 5 }
+      ]
+    },
+    {
+      "category_name": "其他支出",
+      "keywords": [
+        { "keyword": "手续费", "match_field": "product_desc", "priority": 4 },
+        { "keyword": "服务费", "match_field": "product_desc", "priority": 3 }
+      ]
+    }
+  ]
+}

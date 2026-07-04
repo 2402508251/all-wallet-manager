@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "wechat": {
+    "trade_type": {
+      "商户消费": "consumption",
+      "微信红包-发出": "transfer_out",
+      "微信红包-领取": "transfer_in",
+      "转账-转出": "transfer_out",
+      "转账-转入": "transfer_in",
+      "信用卡还款": "repayment",
+      "商户消费退款": "refund",
+      "充值": "topup",
+      "提现": "withdrawal",
+      "理财通买入": "investment",
+      "零钱通存入": "investment",
+      "群收款": "transfer_in"
+    },
+    "direction": {
+      "支出": "expense",
+      "收入": "income",
+      "不计入": "neutral"
+    }
+  },
+  "alipay": {
+    "trade_type": {
+      "退款": "refund",
+      "转账": "transfer_out",
+      "余额宝": "investment",
+      "充值": "topup",
+      "提现": "withdrawal"
+    },
+    "direction": {
+      "支出": "expense",
+      "收入": "income",
+      "不计收支": "neutral"
+    },
+    "credit_keywords": ["花呗", "信用购"]
+  },
+  "ccb": {
+    "trade_type": {
+      "消费": "consumption",
+      "消费退货": "refund",
+      "还款": "repayment",
+      "充值": "topup",
+      "转账": "transfer_out"
+    }
+  }
+}

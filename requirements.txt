@@ -1,0 +1,21 @@
+# 桌面容器
+pywebview>=5.0
+
+# 表格解析
+openpyxl>=3.1
+xlrd>=2.0
+pandas>=2.0
+
+# 编码检测
+chardet>=5.0
+
+# 加密 ZIP 解压
+pyzipper>=0.3
+
+# 加密
+pycryptodome>=3.19
+
+# 金额运算（标准库 Decimal，无需额外依赖）
+# 邮件 IMAP（标准库 imaplib + email，无需额外依赖）
+# 压缩处理（标准库 zipfile，无需额外依赖）
+# 多线程（标准库 threading，无需额外依赖）

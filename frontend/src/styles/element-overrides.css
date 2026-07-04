@@ -1,0 +1,44 @@
+/* styles/element-overrides.css — Element Plus 主题覆盖 */
+
+/* 表格紧凑模式 */
+.el-table--compact .el-table__row td {
+  padding: 4px 0;
+}
+
+/* 抽屉内 Tab 面板减少内边距 */
+.el-drawer__body .el-tabs__content {
+  padding: 12px;
+}
+
+/* 摘要卡片统计数字 */
+.el-statistic__number {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+/* 导航菜单激活项 */
+.el-menu--horizontal {
+  border-bottom: 1px solid var(--border-color-lighter);
+}
+
+.el-menu--horizontal > .el-menu-item.is-active {
+  border-bottom-color: var(--color-primary);
+}
+
+/* 表单在弹窗中的间距 */
+.el-dialog .el-form-item:last-child {
+  margin-bottom: 0;
+}
+
+/* 页面标题 */
+.page-title {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-md);
+}
+
+/* Tab 内容内边距 */
+.el-tabs__content {
+  padding-top: var(--spacing-sm);
+}
