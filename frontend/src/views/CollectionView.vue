@@ -39,6 +39,8 @@
       @set-channel="handleSetChannel"
       @set-password="handleSetPassword"
       @view-result="handleViewResult"
+      @delete-records="handleDeleteRecords"
+      @delete-bills="handleDeleteBills"
     />
 
     <!-- 子组件弹窗 -->
@@ -149,6 +151,48 @@ function handleViewResult(row) {
     } catch {
       ElMessage.warning('解析结果数据异常')
     }
+  }
+}
+
+async function handleDeleteRecords(recordIds) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${recordIds.length} 条采集记录？已解析的记录需先删除关联账单。`,
+      '删除采集记录',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const data = await collectionStore.deleteCollectionRecords(recordIds)
+    if (data.blocked?.length > 0) {
+      ElMessage.warning(`${data.deleted_count} 条已删除，${data.blocked.length} 条因关联账单未删除被阻止`)
+    } else {
+      ElMessage.success(`已删除 ${data.deleted_count} 条采集记录`)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '删除失败')
+  }
+}
+
+async function handleDeleteBills(recordIds) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${recordIds.length} 条采集记录关联的账单数据？采集记录将保留。`,
+      '删除关联账单',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const data = await collectionStore.deleteBillsByCollections(recordIds)
+    ElMessage.success(`已删除 ${data.deleted_count} 条账单`)
+  } catch (e) {
+    ElMessage.error(e.message || '删除失败')
   }
 }
 </script>

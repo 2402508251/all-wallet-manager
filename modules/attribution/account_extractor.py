@@ -9,6 +9,18 @@ import openpyxl
 class AccountExtractor:
     """从各渠道账单中提取账户标识"""
 
+    # 支付方式分类关键词
+    WECHAT_BANK_KEYWORDS = ['银行', '储蓄卡', '信用卡']  # 银行卡类
+    WECHAT_CREDIT_KEYWORDS = ['分付']  # 贷款类
+    WECHAT_BALANCE_KEYWORDS = ['零钱', '零钱通']  # 余额类
+    WECHAT_FAMILY_KEYWORDS = ['亲属卡']  # 亲属卡
+    WECHAT_DISCOUNT_KEYWORDS = ['立减', '红包', '优惠', '券', '随机']  # 非真实付款
+
+    ALIPAY_BANK_KEYWORDS = ['银行', '储蓄卡', '信用卡']  # 银行卡类
+    ALIPAY_CREDIT_KEYWORDS = ['花呗', '信用支付', '贷']  # 贷款类
+    ALIPAY_BALANCE_KEYWORDS = ['余额', '余额宝']  # 余额类
+    ALIPAY_DISCOUNT_KEYWORDS = ['立减', '红包', '优惠', '券', '随机']  # 非真实付款
+
     # ─── 微信账户提取 ─────────────────────────────────
 
     def extract_wechat_account_info(self, file_path: str) -> dict:
@@ -25,31 +37,83 @@ class AccountExtractor:
         elif ext == '.csv':
             nickname = self._extract_wechat_nickname_csv(file_path)
 
+        if not nickname:
+            nickname = '未知用户'
+
         # 从账单数据中提取所有支付方式
         payment_methods = self._extract_wechat_payment_methods(file_path)
 
-        for pm in payment_methods:
-            # 提取银行卡尾号（如"招商银行(1234)"）
-            card_suffix = self._extract_card_suffix(pm)
+        # 分类处理支付方式
+        has_bank_account = False
+        bank_accounts = []
+        credit_accounts = []
+        balance_accounts = []
+        family_accounts = []
+        other_accounts = []
 
-            if card_suffix:
-                tag = f"wechat-{nickname}-{card_suffix}"
+        for pm in payment_methods:
+            pm_type = self._classify_wechat_payment_method(pm)
+
+            if pm_type == 'bank':
+                card_suffix = self._extract_card_suffix(pm)
+                bank_name = self._extract_bank_name(pm)
+                tag = f"wechat-{nickname}-{bank_name}_{card_suffix}" if bank_name and card_suffix else f"wechat-{nickname}-{card_suffix}"
                 name = f"微信-{nickname}-{pm}"
-            else:
-                # 非银行卡支付（零钱、零钱通等）
+                bank_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+                has_bank_account = True
+            elif pm_type == 'credit':
                 tag = f"wechat-{nickname}-{pm}"
                 name = f"微信-{nickname}-{pm}"
+                credit_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+            elif pm_type == 'balance':
+                tag = f"wechat-{nickname}-{pm}"
+                name = f"微信-{nickname}-{pm}"
+                balance_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+            elif pm_type == 'family':
+                tag = f"wechat-{nickname}-{pm}"
+                name = f"微信-{nickname}-{pm}"
+                family_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+            elif pm_type == 'discount':
+                # 非真实付款统一一个账户
+                pass  # 最后统一添加
+            else:
+                # 未识别的归入其他
+                pass  # 最后统一添加
 
-            accounts.append({
-                'tag': tag,
-                'name': name,
-                'payment_method': pm,
-            })
+        # 合并账户列表
+        accounts = bank_accounts + credit_accounts + balance_accounts + family_accounts
+
+        # 非真实付款统一账户
+        accounts.append({
+            'tag': f"wechat-{nickname}-其他",
+            'name': f"微信-{nickname}-其他优惠",
+            'payment_method': '_discount_',
+        })
 
         return {
             'nickname': nickname,
             'accounts': accounts,
         }
+
+    def _classify_wechat_payment_method(self, pm: str) -> str:
+        """分类微信支付方式"""
+        pm_lower = pm.lower()
+        for kw in self.WECHAT_DISCOUNT_KEYWORDS:
+            if kw in pm:
+                return 'discount'
+        for kw in self.WECHAT_BANK_KEYWORDS:
+            if kw in pm:
+                return 'bank'
+        for kw in self.WECHAT_CREDIT_KEYWORDS:
+            if kw in pm:
+                return 'credit'
+        for kw in self.WECHAT_FAMILY_KEYWORDS:
+            if kw in pm:
+                return 'family'
+        for kw in self.WECHAT_BALANCE_KEYWORDS:
+            if kw in pm:
+                return 'balance'
+        return 'other'
 
     def _extract_wechat_nickname_xlsx(self, file_path: str) -> str:
         """从xlsx元信息提取微信昵称"""
@@ -124,32 +188,156 @@ class AccountExtractor:
     def extract_alipay_account_info(self, file_path: str) -> dict:
         """
         从支付宝账单中提取账户标识
-        返回: { 'accounts': [{'tag': '账户标识', 'name': '账户名', 'payment_method': '支付方式'}] }
+        返回: { 'account_suffix': '账号尾号', 'accounts': [{'tag': '账户标识', 'name': '账户名', 'payment_method': '支付方式'}] }
         """
         accounts = []
+
+        # 提取支付宝账号尾号
+        account_suffix = self._extract_alipay_account_suffix(file_path)
+        if not account_suffix:
+            account_suffix = '未知'
+
         payment_methods = self._extract_alipay_payment_methods(file_path)
 
+        # 分类处理支付方式（使用集合去重）
+        bank_account_tags = set()
+        credit_account_tags = set()
+        balance_account_tags = set()
+        bank_accounts = []
+        credit_accounts = []
+        balance_accounts = []
+        has_other_discount = False
+
         for pm in payment_methods:
-            # 提取银行卡尾号（如"建设银行储蓄卡(0480)"）
-            card_suffix = self._extract_card_suffix(pm)
+            pm_type = self._classify_alipay_payment_method(pm)
+            pm_normalized = self._normalize_alipay_payment_method(pm)
 
-            if card_suffix:
-                tag = f"alipay-{card_suffix}-{self._clean_payment_method(pm)}"
-                name = f"支付宝-{pm}"
-            elif '余额' in pm:
-                tag = f"alipay-余额-{pm}"
-                name = f"支付宝-{pm}"
+            if pm_type == 'bank':
+                card_suffix = self._extract_card_suffix(pm)
+                bank_name = self._extract_bank_name(pm)
+                tag = f"alipay-{account_suffix}-{bank_name}_{card_suffix}" if bank_name and card_suffix else f"alipay-{account_suffix}-{card_suffix}"
+                if tag not in bank_account_tags:
+                    bank_account_tags.add(tag)
+                    name = f"支付宝-{account_suffix}-{pm_normalized}"
+                    bank_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+            elif pm_type == 'credit':
+                tag = f"alipay-{account_suffix}-{pm_normalized}"
+                if tag not in credit_account_tags:
+                    credit_account_tags.add(tag)
+                    name = f"支付宝-{account_suffix}-{pm_normalized}"
+                    credit_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+            elif pm_type == 'balance':
+                tag = f"alipay-{account_suffix}-{pm_normalized}"
+                if tag not in balance_account_tags:
+                    balance_account_tags.add(tag)
+                    name = f"支付宝-{account_suffix}-{pm_normalized}"
+                    balance_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+            elif pm_type == 'discount':
+                # 非真实付款统一一个账户
+                has_other_discount = True
             else:
-                tag = f"alipay-{pm}"
-                name = f"支付宝-{pm}"
+                # 未识别的归入其他
+                pass
 
+        # 合并账户列表
+        accounts = bank_accounts + credit_accounts + balance_accounts
+
+        # 非真实付款统一账户
+        if has_other_discount:
             accounts.append({
-                'tag': tag,
-                'name': name,
-                'payment_method': pm,
+                'tag': f"alipay-{account_suffix}-优惠",
+                'name': f"支付宝-{account_suffix}-优惠",
+                'payment_method': '_discount_',
             })
 
-        return {'accounts': accounts}
+        return {'account_suffix': account_suffix, 'accounts': accounts}
+
+    def _classify_alipay_payment_method(self, pm: str) -> str:
+        """分类支付宝支付方式"""
+        for kw in self.ALIPAY_DISCOUNT_KEYWORDS:
+            if kw in pm:
+                return 'discount'
+        for kw in self.ALIPAY_BANK_KEYWORDS:
+            if kw in pm:
+                return 'bank'
+        for kw in self.ALIPAY_CREDIT_KEYWORDS:
+            if kw in pm:
+                return 'credit'
+        for kw in self.ALIPAY_BALANCE_KEYWORDS:
+            if kw in pm:
+                return 'balance'
+        return 'other'
+
+    def _normalize_alipay_payment_method(self, pm: str) -> str:
+        """规范化支付宝支付方式名称，提取核心部分"""
+        # 账户余额类：提取"账户余额"或"余额宝"
+        if '账户余额' in pm:
+            return '账户余额'
+        if '余额宝' in pm:
+            return '余额宝'
+        # 花呗类
+        if '花呗' in pm:
+            return '花呗'
+        # 银行卡类：保留原格式
+        if any(kw in pm for kw in self.ALIPAY_BANK_KEYWORDS):
+            return pm
+        return pm
+
+    def _extract_alipay_account_suffix(self, file_path: str) -> str:
+        """从支付宝账单元信息提取账号尾号"""
+        ext = os.path.splitext(file_path)[1].lower()
+        suffix = None
+
+        try:
+            if ext == '.csv':
+                for encoding in ('gbk', 'utf-8-sig', 'utf-8', 'gb18030'):
+                    try:
+                        with open(file_path, 'r', encoding=encoding) as f:
+                            lines = f.readlines()
+                            # 查找元信息中的账号（通常在前几行）
+                            for line in lines[:25]:
+                                # 匹配 "账号：xxx" 或 "支付宝账号：xxx"
+                                match = re.search(r'账号[：:]\s*(\S+)', line)
+                                if match:
+                                    account_str = match.group(1)
+                                    # 提取手机号或邮箱尾号
+                                    digits = re.sub(r'\D', '', account_str)
+                                    if len(digits) >= 4:
+                                        suffix = digits[-4:]
+                                        break
+                                    # 如果是邮箱格式，取@前的最后4位
+                                    if '@' in account_str:
+                                        email_prefix = account_str.split('@')[0]
+                                        suffix = email_prefix[-4:] if len(email_prefix) >= 4 else email_prefix
+                                        break
+                        if suffix:
+                            break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+            elif ext == '.xlsx':
+                wb = openpyxl.load_workbook(file_path, read_only=True)
+                ws = wb.active
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i >= 25:  # 只检查前25行元信息
+                        break
+                    for cell in row:
+                        if cell and isinstance(cell, str):
+                            match = re.search(r'账号[：:]\s*(\S+)', cell)
+                            if match:
+                                account_str = match.group(1)
+                                digits = re.sub(r'\D', '', account_str)
+                                if len(digits) >= 4:
+                                    suffix = digits[-4:]
+                                    break
+                                if '@' in account_str:
+                                    email_prefix = account_str.split('@')[0]
+                                    suffix = email_prefix[-4:] if len(email_prefix) >= 4 else email_prefix
+                                    break
+                wb.close()
+        except Exception:
+            pass
+
+        return suffix
 
     def _extract_alipay_payment_methods(self, file_path: str) -> list[str]:
         """从支付宝账单数据中提取所有支付方式"""
@@ -233,17 +421,27 @@ class AccountExtractor:
             import xlrd
             wb = xlrd.open_workbook(file_path)
             ws = wb.sheet_by_index(0)
-            for r in range(min(ws.nrows, 5)):
+            # 查找包含"账号"的单元格（不查找"账户"，避免混淆）
+            for r in range(min(ws.nrows, 10)):
                 for c in range(ws.ncols):
                     val = str(ws.cell_value(r, c)).strip()
-                    if '账号' in val or '账户' in val:
+                    if '账号' in val and '客户' not in val:  # 排除"客户账号"等非银行卡号
+                        # 取同一行或下一行的值
                         for c2 in range(c + 1, ws.ncols):
                             v = str(ws.cell_value(r, c2)).strip()
-                            if v and v != '账号' and v != '账户':
+                            if v and v != '账号':
+                                # 只提取纯数字（银行卡号）
                                 digits = re.sub(r'\D', '', v)
                                 if len(digits) >= 4:
                                     return digits[-4:]
-                                return v
+                        # 也检查下一行
+                        if r + 1 < ws.nrows:
+                            for c2 in range(ws.ncols):
+                                v = str(ws.cell_value(r + 1, c2)).strip()
+                                if v:
+                                    digits = re.sub(r'\D', '', v)
+                                    if len(digits) >= 4:
+                                        return digits[-4:]
         except Exception:
             pass
         return None
@@ -254,11 +452,14 @@ class AccountExtractor:
             with pdfplumber.open(file_path) as pdf:
                 for page in pdf.pages:
                     text = page.extract_text() or ''
-                    match = re.search(r'账号[：:]\s*(\S+)', text)
+                    # 匹配银行卡号（16-19位数字）
+                    match = re.search(r'账号[：:]\s*(\d{16,19})', text)
                     if match:
-                        digits = re.sub(r'\D', '', match.group(1))
-                        if len(digits) >= 4:
-                            return digits[-4:]
+                        return match.group(1)[-4:]
+                    # 匹配"卡号"关键词
+                    match = re.search(r'卡号[：:]\s*(\d{16,19})', text)
+                    if match:
+                        return match.group(1)[-4:]
         except Exception:
             pass
         return None
@@ -268,6 +469,16 @@ class AccountExtractor:
     def _extract_card_suffix(self, payment_method: str) -> str:
         """从支付方式中提取银行卡尾号（如(0480)）"""
         match = re.search(r'\(([0-9]{4})\)', payment_method)
+        if match:
+            return match.group(1)
+        return ''
+
+    def _extract_bank_name(self, payment_method: str) -> str:
+        """从支付方式中提取银行名称（如"招商银行储蓄卡(1234)" -> "招商银行"）"""
+        # 移除尾号部分
+        pm_clean = re.sub(r'\([0-9]{4}\)', '', payment_method)
+        # 匹配银行名
+        match = re.match(r'^([^\s]+银行)', pm_clean)
         if match:
             return match.group(1)
         return ''

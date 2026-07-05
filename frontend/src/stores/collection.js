@@ -60,6 +60,18 @@ export const useCollectionStore = defineStore('collection', {
       await this.loadCollections()
     },
 
+    async deleteCollectionRecords(recordIds) {
+      const data = await call('delete_collection_records', { record_ids: recordIds })
+      await this.loadCollections()
+      return data
+    },
+
+    async deleteBillsByCollections(recordIds) {
+      const data = await call('delete_bills_by_collections', { record_ids: recordIds })
+      await this.loadCollections()
+      return data
+    },
+
     // ─── 邮箱配置 ─────────────────────────
     async loadEmailConfigs() {
       const data = await call('get_email_configs', {})

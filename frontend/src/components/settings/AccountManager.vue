@@ -21,9 +21,10 @@
           <el-tag size="small">{{ channelLabel(row.channel) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="80" fixed="right">
+      <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
+          <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -59,7 +60,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
@@ -157,5 +158,13 @@ async function handleSave() {
 function channelLabel(ch) {
   const map = { wechat: '微信', alipay: '支付宝', ccb: '建行' }
   return map[ch] || ch
+}
+
+async function handleDelete(row) {
+  try {
+    await ElMessageBox.confirm(`确定要删除账户"${row.account_name}"吗？`, '确认删除', { type: 'warning' })
+    await systemStore.deleteAccount(row.id)
+    ElMessage.success('账户已删除')
+  } catch { /* 取消 */ }
 }
 </script>

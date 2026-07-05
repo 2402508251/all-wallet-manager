@@ -1345,3 +1345,146 @@ class ApiBridge:
             (role_id, family_id),
         )
         return self.ok()
+
+    # ─── 6.2.12 采集记录删除 ────────────────────────────
+
+    def delete_collection_records(self, params=None) -> dict:
+        """仅删除采集记录，需满足：未解析 或 关联账单已删除"""
+        record_ids = (params or {}).get('record_ids', [])
+        if not record_ids:
+            return self.err('未指定采集记录')
+
+        deleted_count = 0
+        blocked = []
+        for record_id in record_ids:
+            record = self.dal.fetch_one(
+                "SELECT status, batch_id FROM collection_records WHERE id = ?", (record_id,)
+            )
+            if not record:
+                blocked.append({'id': record_id, 'reason': '记录不存在'})
+                continue
+
+            # 未解析状态直接可删
+            if record['status'] == 'pending':
+                self.dal.delete('collection_records', 'id = ?', (record_id,))
+                deleted_count += 1
+                continue
+
+            # 已解析状态需检查账单是否已删除
+            if record['batch_id']:
+                bills_exist = self.dal.fetch_one(
+                    "SELECT COUNT(*) as cnt FROM unified_bills WHERE batch_id = ? AND is_deleted = 0",
+                    (record['batch_id'],)
+                )
+                if bills_exist and bills_exist['cnt'] > 0:
+                    blocked.append({'id': record_id, 'reason': '关联账单未删除'})
+                    continue
+
+            self.dal.delete('collection_records', 'id = ?', (record_id,))
+            deleted_count += 1
+
+        return self.ok({'deleted_count': deleted_count, 'blocked': blocked})
+
+    def delete_bills_by_collections(self, params=None) -> dict:
+        """
+        仅删除关联账单，保留采集记录。
+        外键依赖关系（删除顺序必须严格遵守）：
+          unified_bills.source_bill_id → source_bills(id)  [循环]
+          bill_accounting.bill_id → unified_bills(id)
+          bill_accounting.merged_to_id → unified_bills(id)
+          source_bills.bill_id → unified_bills(id)
+          collection_records.batch_id → import_batches(batch_id)
+        正确顺序：
+          1. 解除 merged_to_id 引用
+          2. 解除 source_bill_id 循环引用
+          3. 删除 bill_accounting（引用 unified_bills）
+          4. 删除 snapshot_details
+          5. 删除 source_bills（引用 unified_bills，此时 unified_bills 不再引用 source_bills）
+          6. 删除 unified_bills（此时无表引用它）
+          7. 解除 collection_records.batch_id 引用
+          8. 删除 import_batches
+        """
+        record_ids = (params or {}).get('record_ids', [])
+        if not record_ids:
+            return self.err('未指定采集记录')
+
+        deleted_count = 0
+        conn = self.dal.conn
+
+        try:
+            with self.dal._lock:
+                # 收集所有 batch_id
+                batch_ids = []
+                for record_id in record_ids:
+                    record = conn.execute(
+                        "SELECT batch_id FROM collection_records WHERE id = ?", (record_id,)
+                    ).fetchone()
+                    if record and record['batch_id']:
+                        batch_ids.append(record['batch_id'])
+
+                if not batch_ids:
+                    return self.ok({'deleted_count': 0})
+
+                # 收集所有 bill_ids
+                all_bill_ids = []
+                for batch_id in batch_ids:
+                    bills = conn.execute(
+                        "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
+                    ).fetchall()
+                    all_bill_ids.extend([b['id'] for b in bills])
+
+                if all_bill_ids:
+                    placeholders = ', '.join(['?' for _ in all_bill_ids])
+                    bill_params = tuple(all_bill_ids)
+
+                    # 1. 解除 merged_to_id 引用（其他账单可能合并到这些账单）
+                    conn.execute(
+                        f"UPDATE bill_accounting SET merged_to_id = NULL WHERE merged_to_id IN ({placeholders})",
+                        bill_params
+                    )
+                    # 2. 解除 source_bill_id 循环引用（unified_bills → source_bills）
+                    conn.execute(
+                        f"UPDATE unified_bills SET source_bill_id = NULL WHERE id IN ({placeholders})",
+                        bill_params
+                    )
+                    # 3. 删除 bill_accounting（引用 unified_bills.id）
+                    conn.execute(
+                        f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
+                        bill_params
+                    )
+                    # 4. 删除 snapshot_details
+                    conn.execute(
+                        f"DELETE FROM snapshot_details WHERE bill_id IN ({placeholders})",
+                        bill_params
+                    )
+                    # 5. 删除 source_bills（引用 unified_bills.id，此时已无反向引用）
+                    conn.execute(
+                        f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
+                        bill_params
+                    )
+                    # 6. 删除 unified_bills（此时无表再引用它）
+                    batch_placeholders = ', '.join(['?' for _ in batch_ids])
+                    conn.execute(
+                        f"DELETE FROM unified_bills WHERE batch_id IN ({batch_placeholders})",
+                        tuple(batch_ids)
+                    )
+                    deleted_count = len(all_bill_ids)
+
+                # 7. 解除 collection_records 对 import_batches 的外键引用
+                batch_placeholders = ', '.join(['?' for _ in batch_ids])
+                conn.execute(
+                    f"UPDATE collection_records SET batch_id = NULL, status = 'pending', parse_result = NULL WHERE batch_id IN ({batch_placeholders})",
+                    tuple(batch_ids)
+                )
+                # 8. 删除 import_batches
+                conn.execute(
+                    f"DELETE FROM import_batches WHERE batch_id IN ({batch_placeholders})",
+                    tuple(batch_ids)
+                )
+
+                conn.commit()
+
+            return self.ok({'deleted_count': deleted_count})
+        except Exception as e:
+            conn.rollback()
+            return self.err(f'删除失败: {e}')

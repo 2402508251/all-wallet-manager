@@ -2,10 +2,28 @@
   <div class="card-box">
     <div class="action-bar">
       <h3>采集结果列表 (共 {{ total }} 条)</h3>
-      <el-button type="primary" size="small" :loading="refreshing" @click="refresh">
-        <el-icon><Refresh /></el-icon>
-        刷新
-      </el-button>
+      <div class="action-buttons">
+        <el-button
+          type="danger"
+          size="small"
+          :disabled="selectedIds.length === 0"
+          @click="$emit('delete-records', selectedIds)"
+        >
+          删除记录 ({{ selectedIds.length }})
+        </el-button>
+        <el-button
+          type="warning"
+          size="small"
+          :disabled="selectedIds.length === 0"
+          @click="$emit('delete-bills', selectedIds)"
+        >
+          删除账单 ({{ selectedIds.length }})
+        </el-button>
+        <el-button type="primary" size="small" :loading="refreshing" @click="refresh">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+      </div>
     </div>
 
     <el-table
@@ -14,7 +32,9 @@
       style="width: 100%"
       size="default"
       empty-text="暂无采集记录"
+      @selection-change="handleSelectionChange"
     >
+      <el-table-column type="selection" width="50" />
       <el-table-column prop="file_name" label="文件名" min-width="180" show-overflow-tooltip />
       <el-table-column label="渠道" width="120">
         <template #default="{ row }">
@@ -113,13 +133,18 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-defineEmits(['parse', 'set-channel', 'set-password', 'view-result'])
+defineEmits(['parse', 'set-channel', 'set-password', 'view-result', 'delete-records', 'delete-bills'])
 
 const collectionStore = useCollectionStore()
 const refreshing = ref(false)
+const selectedIds = ref([])
 
 const currentPage = ref(1)
 const currentPageSize = ref(20)
+
+function handleSelectionChange(selection) {
+  selectedIds.value = selection.map(row => row.id)
+}
 
 function refresh() {
   refreshing.value = true

@@ -98,9 +98,7 @@ export const useSystemStore = defineStore('system', {
 
     async deleteAccount(accountId) {
       await call('delete_account', { account_id: accountId })
-      if (this.currentRoleId) {
-        await this.loadAccounts(this.currentRoleId)
-      }
+      await this.loadAccounts(this.currentRoleId)
     },
 
     // ─── 分类 ────────────────────────────
