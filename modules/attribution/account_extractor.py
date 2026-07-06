@@ -426,11 +426,17 @@ class AccountExtractor:
                 for c in range(ws.ncols):
                     val = str(ws.cell_value(r, c)).strip()
                     if '账号' in val and '客户' not in val:  # 排除"客户账号"等非银行卡号
-                        # 取同一行或下一行的值
+                        # 优先从当前单元格提取（标签和值可能在同一合并单元格中）
+                        digits = re.sub(r'\D', '', val)
+                        if len(digits) >= 4:
+                            return digits[-4:]
+                        # 再从右侧单元格查找
                         for c2 in range(c + 1, ws.ncols):
                             v = str(ws.cell_value(r, c2)).strip()
                             if v and v != '账号':
-                                # 只提取纯数字（银行卡号）
+                                # 跳过日期/币种/金额类单元格，避免误提取
+                                if any(kw in v for kw in ('日期', '时间', '币种', '金额', '余额')):
+                                    continue
                                 digits = re.sub(r'\D', '', v)
                                 if len(digits) >= 4:
                                     return digits[-4:]
@@ -439,6 +445,9 @@ class AccountExtractor:
                             for c2 in range(ws.ncols):
                                 v = str(ws.cell_value(r + 1, c2)).strip()
                                 if v:
+                                    # 跳过日期/币种/金额类单元格，避免误提取
+                                    if any(kw in v for kw in ('日期', '时间', '币种', '金额', '余额')):
+                                        continue
                                     digits = re.sub(r'\D', '', v)
                                     if len(digits) >= 4:
                                         return digits[-4:]

@@ -154,62 +154,63 @@ class TransferPairer:
         """
         transfer_link_id = str(uuid.uuid4())
 
-        for bill_id in (out_id, in_id):
-            existing = self.dal.fetch_one(
-                "SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)
-            )
-            if existing:
-                self.dal.update(
-                    'bill_accounting',
-                    {'transfer_link_id': transfer_link_id},
-                    'bill_id = ?',
-                    (bill_id,),
+        with self.dal.transaction():
+            for bill_id in (out_id, in_id):
+                existing = self.dal.fetch_one(
+                    "SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)
                 )
-            else:
-                self.dal.insert('bill_accounting', {
-                    'bill_id': bill_id,
-                    'transfer_link_id': transfer_link_id,
-                })
-
-        result = {
-            'success': True,
-            'transfer_link_id': transfer_link_id,
-            'out_id': out_id,
-            'in_id': in_id,
-        }
-
-        if fee_amount <= 0:
-            out_record = self.dal.fetch_one(
-                "SELECT amount_cents FROM unified_bills WHERE id = ?", (out_id,)
-            )
-            in_record = self.dal.fetch_one(
-                "SELECT amount_cents FROM unified_bills WHERE id = ?", (in_id,)
-            )
-            if out_record and in_record:
-                diff = out_record['amount_cents'] - in_record['amount_cents']
-                if diff > 0 and diff <= out_record['amount_cents'] * 0.05:
-                    fee_amount = diff
-
-        if fee_amount > 0:
-            existing_fee = self.dal.fetch_one(
-                "SELECT ub.id FROM unified_bills ub "
-                "JOIN bill_accounting ba ON ub.id = ba.bill_id "
-                "WHERE ub.trade_type = 'fee' AND ba.transfer_link_id = ?",
-                (transfer_link_id,),
-            )
-            if not existing_fee:
-                out_record = self.dal.fetch_one(
-                    "SELECT * FROM unified_bills WHERE id = ?", (out_id,)
-                )
-                if out_record:
-                    fee_record = self.generate_fee_record(dict(out_record), fee_amount)
-                    fee_record['is_system'] = 1
-                    fee_id = self.dal.insert('unified_bills', fee_record)
+                if existing:
+                    self.dal.update(
+                        'bill_accounting',
+                        {'transfer_link_id': transfer_link_id},
+                        'bill_id = ?',
+                        (bill_id,),
+                    )
+                else:
                     self.dal.insert('bill_accounting', {
-                        'bill_id': fee_id,
+                        'bill_id': bill_id,
                         'transfer_link_id': transfer_link_id,
                     })
-                    result['fee_bill_id'] = fee_id
+
+            result = {
+                'success': True,
+                'transfer_link_id': transfer_link_id,
+                'out_id': out_id,
+                'in_id': in_id,
+            }
+
+            if fee_amount <= 0:
+                out_record = self.dal.fetch_one(
+                    "SELECT amount_cents FROM unified_bills WHERE id = ?", (out_id,)
+                )
+                in_record = self.dal.fetch_one(
+                    "SELECT amount_cents FROM unified_bills WHERE id = ?", (in_id,)
+                )
+                if out_record and in_record:
+                    diff = out_record['amount_cents'] - in_record['amount_cents']
+                    if diff > 0 and diff <= out_record['amount_cents'] * 0.05:
+                        fee_amount = diff
+
+            if fee_amount > 0:
+                existing_fee = self.dal.fetch_one(
+                    "SELECT ub.id FROM unified_bills ub "
+                    "JOIN bill_accounting ba ON ub.id = ba.bill_id "
+                    "WHERE ub.trade_type = 'fee' AND ba.transfer_link_id = ?",
+                    (transfer_link_id,),
+                )
+                if not existing_fee:
+                    out_record = self.dal.fetch_one(
+                        "SELECT * FROM unified_bills WHERE id = ?", (out_id,)
+                    )
+                    if out_record:
+                        fee_record = self.generate_fee_record(dict(out_record), fee_amount)
+                        fee_record['is_system'] = 1
+                        fee_id = self.dal.insert('unified_bills', fee_record)
+                        self.dal.insert('bill_accounting', {
+                            'bill_id': fee_id,
+                            'transfer_link_id': transfer_link_id,
+                        })
+                        result['fee_bill_id'] = fee_id
 
         return result
 

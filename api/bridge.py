@@ -4,6 +4,7 @@ PyWebView API 桥接 —— 注册所有暴露给前端的方法
 所有 API 方法统一接收 params 字典参数（PyWebView 传参机制）
 """
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, date
@@ -24,15 +25,19 @@ from core.snapshot import SnapshotEngine
 from core.crypto_utils import CredentialEncryptor
 
 
+logger = logging.getLogger(__name__)
+
+
 class ApiBridge:
     def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager, app_dir: str):
         self.db = db_manager
         self.config = config_manager
         self.dal = DAL(db_manager)
         self.app_dir = app_dir
-        self.snapshot = SnapshotEngine(db_manager)
+        self.snapshot = SnapshotEngine(db_manager, dal=self.dal)
         self.encryptor = CredentialEncryptor()
         self._account_cache = {}
+        self._default_ids = None  # 缓存默认 family/role，避免重复查询
 
     def ok(self, data=None, message='') -> dict:
         return {'success': True, 'data': data, 'message': message}
@@ -48,37 +53,42 @@ class ApiBridge:
         return datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
 
     def ensure_default_family_and_role(self) -> dict:
-        family = self.dal.fetch_one(
-            "SELECT id FROM families WHERE name = '未分配'"
-        )
-        if not family:
-            family_id = self.dal.insert('families', {'name': '未分配', 'is_default': 1})
-        else:
-            family_id = family['id']
+        if self._default_ids is not None:
+            return self._default_ids
 
-        role = self.dal.fetch_one(
-            "SELECT id FROM roles WHERE name = '未分配'"
-        )
-        if not role:
-            role_id = self.dal.insert('roles', {
-                'name': '未分配',
-                'role_type': 'personal',
-            })
-        else:
-            role_id = role['id']
+        with self.dal.transaction():
+            family = self.dal.fetch_one(
+                "SELECT id FROM families WHERE name = '未分配'"
+            )
+            if not family:
+                family_id = self.dal.insert('families', {'name': '未分配', 'is_default': 1})
+            else:
+                family_id = family['id']
 
-        existing_rf = self.dal.fetch_one(
-            "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
-            (role_id, family_id),
-        )
-        if not existing_rf:
-            self.dal.insert('role_families', {
-                'role_id': role_id,
-                'family_id': family_id,
-                'is_primary': 1,
-            })
+            role = self.dal.fetch_one(
+                "SELECT id FROM roles WHERE name = '未分配'"
+            )
+            if not role:
+                role_id = self.dal.insert('roles', {
+                    'name': '未分配',
+                    'role_type': 'personal',
+                })
+            else:
+                role_id = role['id']
 
-        return {'role_id': role_id, 'family_id': family_id}
+            existing_rf = self.dal.fetch_one(
+                "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
+                (role_id, family_id),
+            )
+            if not existing_rf:
+                self.dal.insert('role_families', {
+                    'role_id': role_id,
+                    'family_id': family_id,
+                    'is_primary': 1,
+                })
+
+        self._default_ids = {'role_id': role_id, 'family_id': family_id}
+        return self._default_ids
 
     def get_or_create_account(self, account_tag: str, account_name: str, channel: str) -> int:
         cache_key = f"{account_tag}|{channel}"
@@ -93,11 +103,15 @@ class ApiBridge:
             self._account_cache[cache_key] = account['id']
             return account['id']
 
+        # 确保默认角色存在，新账户自动关联
+        defaults = self.ensure_default_family_and_role()
+        default_role_id = defaults['role_id']
+
         account_id = self.dal.insert('accounts', {
             'account_name': account_name,
             'account_tag': account_tag,
             'channel': channel,
-            'role_id': None,
+            'role_id': default_role_id,
         })
 
         self._account_cache[cache_key] = account_id
@@ -193,99 +207,129 @@ class ApiBridge:
 
             success_count = 0
             duplicate_count = 0
-            for i, rec in enumerate(result.records):
-                existing = self.dal.fetch_one(
-                    "SELECT id FROM unified_bills WHERE channel = ? AND channel_trade_no = ?",
-                    (rec['channel'], rec['channel_trade_no']),
-                )
-                if existing:
-                    duplicate_count += 1
-                    continue
 
-                payment_method = rec.get('payment_method', '')
-                account_id = payment_method_to_account.get(payment_method)
-                if not account_id:
-                    for pm, aid in payment_method_to_account.items():
-                        if pm in payment_method or payment_method in pm:
-                            account_id = aid
-                            break
-                if not account_id and '_default_' in payment_method_to_account:
-                    account_id = payment_method_to_account['_default_']
-
-                role_id = None
-                family_id = None
-                if account_id:
-                    account = self.dal.fetch_one(
-                        "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
+            with self.dal.transaction():
+                for i, rec in enumerate(result.records):
+                    existing = self.dal.fetch_one(
+                        "SELECT id FROM unified_bills WHERE channel = ? AND channel_trade_no = ?",
+                        (rec['channel'], rec['channel_trade_no']),
                     )
-                    if account and account['role_id']:
-                        role_id = account['role_id']
-                        primary_family = self.dal.fetch_one(
-                            "SELECT family_id FROM role_families "
-                            "WHERE role_id = ? AND is_primary = 1",
-                            (role_id,),
+                    if existing:
+                        duplicate_count += 1
+                        continue
+
+                    payment_method = rec.get('payment_method', '')
+                    account_id = payment_method_to_account.get(payment_method)
+                    if not account_id:
+                        for pm, aid in payment_method_to_account.items():
+                            if pm in payment_method or payment_method in pm:
+                                account_id = aid
+                                break
+                    if not account_id and '_default_' in payment_method_to_account:
+                        account_id = payment_method_to_account['_default_']
+
+                    role_id = None
+                    family_id = None
+                    if account_id:
+                        account = self.dal.fetch_one(
+                            "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                         )
-                        if primary_family:
-                            family_id = primary_family['family_id']
+                        if account and account['role_id']:
+                            role_id = account['role_id']
+                            primary_family = self.dal.fetch_one(
+                                "SELECT family_id FROM role_families "
+                                "WHERE role_id = ? AND is_primary = 1",
+                                (role_id,),
+                            )
+                            if primary_family:
+                                family_id = primary_family['family_id']
 
-                assign_status = 'assigned' if (account_id and role_id) else 'pending'
+                    assign_status = 'assigned' if (account_id and role_id) else 'pending'
 
-                bill_id = self.dal.insert('unified_bills', {
-                    'channel': rec['channel'],
-                    'trade_time': rec['trade_time'],
-                    'trade_type': rec['trade_type'],
-                    'direction': rec['direction'],
-                    'amount_cents': rec['amount_cents'],
-                    'counterparty': rec.get('counterparty', ''),
-                    'product_desc': rec.get('product_desc', ''),
-                    'payment_method': payment_method,
-                    'status': rec.get('status', ''),
-                    'channel_trade_no': rec['channel_trade_no'],
-                    'remark': rec.get('remark', ''),
-                    'account_id': account_id,
-                    'role_id': role_id,
-                    'family_id': family_id,
-                    'assign_status': assign_status,
-                    'is_system': 0,
+                    bill_data = {
+                        'channel': rec['channel'],
+                        'trade_time': rec['trade_time'],
+                        'trade_type': rec['trade_type'],
+                        'direction': rec['direction'],
+                        'amount_cents': rec['amount_cents'],
+                        'counterparty': rec.get('counterparty', ''),
+                        'product_desc': rec.get('product_desc', ''),
+                        'payment_method': payment_method,
+                        'status': rec.get('status', ''),
+                        'channel_trade_no': rec['channel_trade_no'],
+                        'remark': rec.get('remark', ''),
+                        'account_id': account_id,
+                        'role_id': role_id,
+                        'family_id': family_id,
+                        'assign_status': assign_status,
+                        'is_system': 0,
+                        'batch_id': batch_id,
+                        'created_at': now,
+                        'updated_at': now,
+                    }
+                    bill_id = self.dal.insert('unified_bills', bill_data)
+                    imported_bill = {**bill_data, 'id': bill_id}
+
+                    if i < len(result.raw_records):
+                        raw = result.raw_records[i]
+                        self.dal.insert('source_bills', {
+                            'bill_id': bill_id,
+                            'channel': rec['channel'],
+                            'raw_json': json.dumps(raw.get('raw', {}), ensure_ascii=False, cls=DateTimeEncoder),
+                            'created_at': now,
+                        })
+
+                    post_action = 'normal_only'
+                    if rec['channel'] in ('wechat', 'alipay'):
+                        from modules.accounting.cross_platform_merger import CrossPlatformMerger
+                        merger = CrossPlatformMerger(self.dal)
+                        merge_result = merger.mark_orphan(imported_bill) or {}
+                        post_action = 'mark_orphan'
+                        if merge_result.get('merged'):
+                            post_action = 'auto_merged_source'
+                    else:
+                        self.dal.insert('bill_accounting', {
+                            'bill_id': bill_id,
+                            'merge_status': 'normal',
+                            'created_at': now,
+                        })
+                        if rec['channel'] == 'ccb':
+                            from modules.accounting.cross_platform_merger import CrossPlatformMerger
+                            merger = CrossPlatformMerger(self.dal)
+                            merge_result = merger.try_merge(imported_bill)
+                            if merge_result and merge_result.get('merged'):
+                                post_action = 'auto_merged_target'
+
+                    logger.info(
+                        "parse_collection post_action=%s bill_id=%s channel=%s batch_id=%s",
+                        post_action, bill_id, rec['channel'], batch_id,
+                    )
+
+                    success_count += 1
+
+                self.dal.insert('import_batches', {
                     'batch_id': batch_id,
-                    'created_at': now,
-                    'updated_at': now,
+                    'source': record['source_type'],
+                    'channel': channel,
+                    'file_name': record['file_name'],
+                    'total_count': result.total,
+                    'success_count': success_count,
+                    'duplicate_count': duplicate_count,
+                    'import_time': now,
                 })
 
-                if i < len(result.raw_records):
-                    raw = result.raw_records[i]
-                    self.dal.insert('source_bills', {
-                        'bill_id': bill_id,
-                        'channel': rec['channel'],
-                        'raw_json': json.dumps(raw.get('raw', {}), ensure_ascii=False, cls=DateTimeEncoder),
-                        'created_at': now,
-                    })
-
-                success_count += 1
-
-            self.dal.insert('import_batches', {
-                'batch_id': batch_id,
-                'source': record['source_type'],
-                'channel': channel,
-                'file_name': record['file_name'],
-                'total_count': result.total,
-                'success_count': success_count,
-                'duplicate_count': duplicate_count,
-                'import_time': now,
-            })
-
-            self.dal.update(
-                'collection_records',
-                {'status': 'parsed', 'batch_id': batch_id,
-                 'parse_result': json.dumps({
-                     'total': result.total,
-                     'success': success_count,
-                     'duplicate': duplicate_count,
-                     'accounts_created': len(account_info.get('accounts', [])),
-                 })},
-                'id = ?',
-                (record_id,),
-            )
+                self.dal.update(
+                    'collection_records',
+                    {'status': 'parsed', 'batch_id': batch_id,
+                     'parse_result': json.dumps({
+                         'total': result.total,
+                         'success': success_count,
+                         'duplicate': duplicate_count,
+                         'accounts_created': len(account_info.get('accounts', [])),
+                     })},
+                    'id = ?',
+                    (record_id,),
+                )
 
             return self.ok({
                 'batch_id': batch_id,
@@ -296,12 +340,15 @@ class ApiBridge:
             })
 
         except Exception as e:
-            self.dal.update(
-                'collection_records',
-                {'status': 'error', 'error_msg': str(e)},
-                'id = ?',
-                (record_id,),
-            )
+            try:
+                self.dal.update(
+                    'collection_records',
+                    {'status': 'error', 'error_msg': str(e)},
+                    'id = ?',
+                    (record_id,),
+                )
+            except Exception:
+                pass
             return self.err(f'解析失败: {e}')
 
     def parse_batch(self, params=None) -> dict:
@@ -465,7 +512,7 @@ class ApiBridge:
         bill_id = (params or {}).get('bill_id')
         bill = self.dal.fetch_one(
             "SELECT ub.*, ba.merge_status, ba.transfer_link_id, "
-            "ba.is_credit, ba.credit_account_id, ba.merged_to_id "
+            "ba.is_credit, ba.credit_account_id, ba.merged_group_id, ba.real_payer_account_id "
             "FROM unified_bills ub "
             "LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
             "WHERE ub.id = ?",
@@ -551,6 +598,26 @@ class ApiBridge:
         paged = orphans[offset:offset + page_size]
         return self.ok({'total': len(orphans), 'list': paged})
 
+    def get_merged_records(self, params=None) -> dict:
+        """获取已合并的记录列表（按 merged_group_id 分组展示）"""
+        p = params or {}
+        page = p.get('page', 1)
+        page_size = p.get('page_size', 50)
+        # 查询发起方记录（merged_source），展示合并组
+        rows = self.dal.fetch_all(
+            "SELECT ub.id, ub.trade_time, ub.channel, ub.counterparty, ub.product_desc, "
+            "ub.amount_cents, ba.merged_group_id, ba.real_payer_account_id, "
+            "a.account_name as real_payer_name "
+            "FROM unified_bills ub "
+            "JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            "LEFT JOIN accounts a ON ba.real_payer_account_id = a.id "
+            "WHERE ba.merge_status = 'merged_source' AND ub.is_deleted = 0 "
+            "ORDER BY ub.trade_time DESC"
+        )
+        offset = (page - 1) * page_size
+        paged = rows[offset:offset + page_size]
+        return self.ok({'total': len(rows), 'list': [dict(r) for r in paged]})
+
     def confirm_orphan_independent(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
         self.dal.update(
@@ -562,13 +629,38 @@ class ApiBridge:
         return self.ok()
 
     def undo_merge(self, params=None) -> dict:
-        merged_source_id = (params or {}).get('merged_source_id')
+        merged_group_id = (params or {}).get('merged_group_id')
         from modules.accounting.cross_platform_merger import CrossPlatformMerger
         merger = CrossPlatformMerger(self.dal)
-        result = merger.undo_merge(merged_source_id)
+        result = merger.undo_merge(merged_group_id)
         if result.get('success'):
             return self.ok(result)
         return self.err(result.get('message', '撤销失败'))
+
+    def try_merge_orphan(self, params=None) -> dict:
+        """尝试为孤儿记录查找匹配的银行卡记录并合并"""
+        bill_id = (params or {}).get('bill_id')
+        if not bill_id:
+            return self.err('缺少账单ID')
+
+        from modules.accounting.cross_platform_merger import CrossPlatformMerger
+        merger = CrossPlatformMerger(self.dal)
+
+        # 获取孤儿记录的完整信息
+        bill = self.dal.fetch_one(
+            "SELECT ub.*, ba.merge_status FROM unified_bills ub "
+            "JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            "WHERE ub.id = ? AND ba.merge_status = 'orphan'",
+            (bill_id,)
+        )
+        if not bill:
+            return self.ok({'merged': False, 'message': '未找到孤儿记录'})
+
+        # 尝试查找匹配的银行卡记录并合并
+        result = merger.mark_orphan(dict(bill))
+        if result.get('merged'):
+            return self.ok({'merged': True, 'merged_group_id': result.get('merged_group_id')})
+        return self.ok({'merged': False, 'message': '未找到匹配的银行卡记录'})
 
     def get_weak_match_candidates(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
@@ -752,12 +844,16 @@ class ApiBridge:
         data = {}
         if name is not None:
             data['name'] = name
-        if is_default is not None:
-            if is_default:
-                self.dal.execute("UPDATE families SET is_default = 0")
-            data['is_default'] = is_default
-        self.dal.update('families', data, 'id = ?', (family_id,))
-        return self.ok()
+        try:
+            with self.dal.transaction():
+                if is_default is not None:
+                    if is_default:
+                        self.dal.execute("UPDATE families SET is_default = 0")
+                    data['is_default'] = is_default
+                self.dal.update('families', data, 'id = ?', (family_id,))
+            return self.ok()
+        except Exception as e:
+            return self.err(f'更新家庭失败: {e}')
 
     def delete_family(self, params=None) -> dict:
         family_id = (params or {}).get('family_id')
@@ -780,14 +876,18 @@ class ApiBridge:
         name = p.get('name', '')
         family_id = p.get('family_id')
         role_type = p.get('role_type', 'personal')
-        rid = self.dal.insert('roles', {
-            'name': name, 'role_type': role_type,
-        })
-        if family_id:
-            self.dal.insert('role_families', {
-                'role_id': rid, 'family_id': family_id, 'is_primary': 1,
-            })
-        return self.ok({'role_id': rid})
+        try:
+            with self.dal.transaction():
+                rid = self.dal.insert('roles', {
+                    'name': name, 'role_type': role_type,
+                })
+                if family_id:
+                    self.dal.insert('role_families', {
+                        'role_id': rid, 'family_id': family_id, 'is_primary': 1,
+                    })
+            return self.ok({'role_id': rid})
+        except Exception as e:
+            return self.err(f'创建角色失败: {e}')
 
     def update_role(self, params=None) -> dict:
         p = params or {}
@@ -836,52 +936,56 @@ class ApiBridge:
         data = {k: v for k, v in p.items()
                 if k in ('account_name', 'account_tag', 'channel', 'role_id')}
 
-        if 'role_id' in data:
-            old_account = self.dal.fetch_one(
-                "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
-            )
-            if old_account and old_account['role_id'] != data['role_id']:
-                new_role_id = data['role_id']
-                new_family_id = None
-                if new_role_id:
-                    primary_family = self.dal.fetch_one(
-                        "SELECT family_id FROM role_families "
-                        "WHERE role_id = ? AND is_primary = 1",
-                        (new_role_id,),
+        try:
+            with self.dal.transaction():
+                if 'role_id' in data:
+                    old_account = self.dal.fetch_one(
+                        "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                     )
-                    if primary_family:
-                        new_family_id = primary_family['family_id']
+                    if old_account and old_account['role_id'] != data['role_id']:
+                        new_role_id = data['role_id']
+                        new_family_id = None
+                        if new_role_id:
+                            primary_family = self.dal.fetch_one(
+                                "SELECT family_id FROM role_families "
+                                "WHERE role_id = ? AND is_primary = 1",
+                                (new_role_id,),
+                            )
+                            if primary_family:
+                                new_family_id = primary_family['family_id']
 
-                bills = self.dal.fetch_all(
-                    "SELECT id FROM unified_bills WHERE account_id = ? AND is_deleted = 0",
-                    (account_id,),
-                )
-                bill_ids = [b['id'] for b in bills]
-                if bill_ids:
-                    self.snapshot.create_snapshot(
-                        'account_role_change',
-                        f'账户{account_id}角色变更，级联更新{len(bill_ids)}条账单',
-                        bill_ids,
-                    )
+                        bills = self.dal.fetch_all(
+                            "SELECT id FROM unified_bills WHERE account_id = ? AND is_deleted = 0",
+                            (account_id,),
+                        )
+                        bill_ids = [b['id'] for b in bills]
+                        if bill_ids:
+                            self.snapshot.create_snapshot(
+                                'account_role_change',
+                                f'账户{account_id}角色变更，级联更新{len(bill_ids)}条账单',
+                                bill_ids,
+                            )
 
-                    new_assign_status = 'assigned' if new_role_id else 'pending'
-                    placeholders = ', '.join(['?' for _ in bill_ids])
-                    self.dal.execute(
-                        f"UPDATE unified_bills SET role_id = ?, family_id = ?, "
-                        f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
-                        (new_role_id, new_family_id, new_assign_status,
-                         self._now(), *bill_ids),
-                    )
+                            new_assign_status = 'assigned' if new_role_id else 'pending'
+                            placeholders = ', '.join(['?' for _ in bill_ids])
+                            self.dal.execute(
+                                f"UPDATE unified_bills SET role_id = ?, family_id = ?, "
+                                f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
+                                (new_role_id, new_family_id, new_assign_status,
+                                 self._now(), *bill_ids),
+                            )
 
-                    self.snapshot.finalize_snapshot(
-                        self.dal.fetch_one(
-                            "SELECT id FROM snapshots ORDER BY id DESC LIMIT 1"
-                        )['id'],
-                        bill_ids,
-                    )
+                            self.snapshot.finalize_snapshot(
+                                self.dal.fetch_one(
+                                    "SELECT id FROM snapshots ORDER BY id DESC LIMIT 1"
+                                )['id'],
+                                bill_ids,
+                            )
 
-        self.dal.update('accounts', data, 'id = ?', (account_id,))
-        return self.ok()
+                self.dal.update('accounts', data, 'id = ?', (account_id,))
+            return self.ok()
+        except Exception as e:
+            return self.err(f'更新账户失败: {e}')
 
     def delete_account(self, params=None) -> dict:
         account_id = (params or {}).get('account_id')
@@ -935,15 +1039,19 @@ class ApiBridge:
         p = params or {}
         category_id = p.get('category_id')
         keywords = p.get('keywords', [])
-        self.dal.delete('category_keywords', 'category_id = ?', (category_id,))
-        for kw in keywords:
-            self.dal.insert('category_keywords', {
-                'category_id': category_id,
-                'keyword': kw.get('keyword', ''),
-                'match_field': kw.get('match_field', 'counterparty'),
-                'priority': kw.get('priority', 0),
-            })
-        return self.ok()
+        try:
+            with self.dal.transaction():
+                self.dal.delete('category_keywords', 'category_id = ?', (category_id,))
+                for kw in keywords:
+                    self.dal.insert('category_keywords', {
+                        'category_id': category_id,
+                        'keyword': kw.get('keyword', ''),
+                        'match_field': kw.get('match_field', 'counterparty'),
+                        'priority': kw.get('priority', 0),
+                    })
+            return self.ok()
+        except Exception as e:
+            return self.err(f'保存关键词失败: {e}')
 
     # ─── 6.2.8 数据管理 ────────────────────────────
 
@@ -996,13 +1104,19 @@ class ApiBridge:
 
     def clear_all_bills(self, params=None) -> dict:
         try:
-            self.dal.execute("DELETE FROM bill_accounting")
-            self.dal.execute("DELETE FROM source_bills")
-            self.dal.execute("DELETE FROM unified_bills")
-            self.dal.execute("DELETE FROM import_batches")
-            self.dal.execute(
-                "UPDATE collection_records SET status = 'pending', batch_id = NULL, parse_result = NULL"
-            )
+            with self.dal.transaction():
+                # 先收集所有账单ID并处理合并组级联
+                all_bills = self.dal.fetch_all("SELECT id FROM unified_bills")
+                all_bill_ids = [b['id'] for b in all_bills]
+                if all_bill_ids:
+                    self._handle_merge_group_cascade(all_bill_ids)
+                self.dal.execute("DELETE FROM bill_accounting")
+                self.dal.execute("DELETE FROM source_bills")
+                self.dal.execute("DELETE FROM unified_bills")
+                self.dal.execute("DELETE FROM import_batches")
+                self.dal.execute(
+                    "UPDATE collection_records SET status = 'pending', batch_id = NULL, parse_result = NULL"
+                )
             return self.ok({'message': '所有账单数据已清除'})
         except Exception as e:
             return self.err(f'清除失败: {e}')
@@ -1014,49 +1128,156 @@ class ApiBridge:
 
         try:
             total_deleted = 0
-            for record_id in record_ids:
-                record = self.dal.fetch_one(
-                    "SELECT batch_id FROM collection_records WHERE id = ?", (record_id,)
-                )
-                if not record or not record['batch_id']:
-                    continue
-
-                batch_id = record['batch_id']
-
-                bills = self.dal.fetch_all(
-                    "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
-                )
-                bill_ids = [b['id'] for b in bills]
-
-                if bill_ids:
-                    placeholders = ', '.join(['?' for _ in bill_ids])
-                    self.dal.execute(
-                        f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
-                        tuple(bill_ids)
+            with self.dal.transaction():
+                # 先收集所有涉及的账单ID，统一处理合并组级联
+                all_bill_ids = []
+                for record_id in record_ids:
+                    record = self.dal.fetch_one(
+                        "SELECT batch_id FROM collection_records WHERE id = ?", (record_id,)
                     )
-                    self.dal.execute(
-                        f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
-                        tuple(bill_ids)
-                    )
-                    self.dal.execute(
-                        f"DELETE FROM unified_bills WHERE batch_id = ?", (batch_id,)
-                    )
-                    total_deleted += len(bill_ids)
+                    if record and record['batch_id']:
+                        bills = self.dal.fetch_all(
+                            "SELECT id FROM unified_bills WHERE batch_id = ?", (record['batch_id'],)
+                        )
+                        all_bill_ids.extend([b['id'] for b in bills])
 
-                self.dal.execute(
-                    "DELETE FROM import_batches WHERE batch_id = ?", (batch_id,)
-                )
+                if all_bill_ids:
+                    self._handle_merge_group_cascade(all_bill_ids)
 
-                self.dal.update(
-                    'collection_records',
-                    {'status': 'pending', 'batch_id': None, 'parse_result': None},
-                    'id = ?',
-                    (record_id,),
-                )
+                for record_id in record_ids:
+                    record = self.dal.fetch_one(
+                        "SELECT batch_id FROM collection_records WHERE id = ?", (record_id,)
+                    )
+                    if not record or not record['batch_id']:
+                        continue
+
+                    batch_id = record['batch_id']
+
+                    bills = self.dal.fetch_all(
+                        "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
+                    )
+                    bill_ids = [b['id'] for b in bills]
+
+                    if bill_ids:
+                        placeholders = ', '.join(['?' for _ in bill_ids])
+                        self.dal.execute(
+                            f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
+                            tuple(bill_ids)
+                        )
+                        self.dal.execute(
+                            f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
+                            tuple(bill_ids)
+                        )
+                        self.dal.execute(
+                            f"DELETE FROM unified_bills WHERE batch_id = ?", (batch_id,)
+                        )
+                        total_deleted += len(bill_ids)
+
+                    self.dal.execute(
+                        "DELETE FROM import_batches WHERE batch_id = ?", (batch_id,)
+                    )
+
+                    self.dal.update(
+                        'collection_records',
+                        {'status': 'pending', 'batch_id': None, 'parse_result': None},
+                        'id = ?',
+                        (record_id,),
+                    )
 
             return self.ok({'deleted_count': total_deleted})
         except Exception as e:
             return self.err(f'清除失败: {e}')
+
+    # ─── 合并组级联处理（内部辅助） ────────────────────────────
+
+    def _handle_merge_group_cascade(self, bill_ids: list) -> None:
+        """
+        删除账单前处理合并组内剩余记录的级联恢复。
+
+        规则：
+        - 删除 merged_source（微信/支付宝发起方）→ merged_target 恢复为 normal + 还原 original_* 字段
+        - 删除 merged_target（银行卡真实支付者）→ merged_source 恢复为 orphan
+        - 合并组内全部被删 → 无需额外处理（调用方负责删除 bill_accounting）
+        """
+        if not bill_ids:
+            return
+
+        placeholders = ', '.join(['?' for _ in bill_ids])
+        params = tuple(bill_ids)
+
+        groups = self.dal.fetch_all(
+            f"SELECT DISTINCT merged_group_id FROM bill_accounting "
+            f"WHERE bill_id IN ({placeholders}) AND merged_group_id IS NOT NULL",
+            params
+        )
+
+        if not groups:
+            return
+
+        deleted_set = set(bill_ids)
+
+        for g in groups:
+            gid = g['merged_group_id']
+            members = self.dal.fetch_all(
+                "SELECT bill_id, merge_status, original_counterparty, original_product_desc "
+                "FROM bill_accounting WHERE merged_group_id = ?",
+                (gid,)
+            )
+
+            remaining = [m for m in members if m['bill_id'] not in deleted_set]
+            deleted_in_group = [m for m in members if m['bill_id'] in deleted_set]
+
+            if not remaining:
+                continue
+
+            has_deleted_source = any(
+                m['merge_status'] == 'merged_source' for m in deleted_in_group
+            )
+            has_deleted_target = any(
+                m['merge_status'] == 'merged_target' for m in deleted_in_group
+            )
+
+            for r in remaining:
+                if r['merge_status'] == 'merged_target' and has_deleted_source:
+                    # 发起方被删 → 真实支付者恢复为 normal，还原原始字段
+                    restore = {}
+                    if r.get('original_counterparty') is not None:
+                        restore['counterparty'] = r['original_counterparty']
+                    if r.get('original_product_desc') is not None:
+                        restore['product_desc'] = r['original_product_desc']
+                    if restore:
+                        self.dal.update(
+                            'unified_bills', restore, 'id = ?', (r['bill_id'],)
+                        )
+                    self.dal.update(
+                        'bill_accounting',
+                        {
+                            'merge_status': 'normal',
+                            'merged_group_id': None,
+                            'real_payer_account_id': None,
+                            'original_counterparty': None,
+                            'original_product_desc': None,
+                        },
+                        'bill_id = ?',
+                        (r['bill_id'],),
+                    )
+
+                elif r['merge_status'] == 'merged_source' and has_deleted_target:
+                    # 真实支付者被删 → 发起方恢复为 orphan
+                    self.dal.update(
+                        'bill_accounting',
+                        {
+                            'merge_status': 'orphan',
+                            'merged_group_id': None,
+                            'real_payer_account_id': None,
+                            'original_counterparty': None,
+                            'original_product_desc': None,
+                        },
+                        'bill_id = ?',
+                        (r['bill_id'],),
+                    )
+
+    # ─── 6.2.8 删除/回收站 ────────────────────────────────────
 
     def delete_bill(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
@@ -1068,12 +1289,28 @@ class ApiBridge:
         if bill['is_deleted'] == 1:
             return self.err('账单已在回收站中')
 
-        self.dal.update(
-            'unified_bills',
-            {'is_deleted': 1, 'updated_at': self._now()},
-            'id = ?',
-            (bill_id,),
-        )
+        with self.dal.transaction():
+            # 处理合并组级联（修复同组其他记录的状态）
+            self._handle_merge_group_cascade([bill_id])
+            # 清理被删账单自身的合并账务数据，恢复后以干净状态重新开始
+            self.dal.update(
+                'bill_accounting',
+                {
+                    'merge_status': 'normal',
+                    'merged_group_id': None,
+                    'real_payer_account_id': None,
+                    'original_counterparty': None,
+                    'original_product_desc': None,
+                },
+                'bill_id = ?',
+                (bill_id,),
+            )
+            self.dal.update(
+                'unified_bills',
+                {'is_deleted': 1, 'updated_at': self._now()},
+                'id = ?',
+                (bill_id,),
+            )
         return self.ok({'deleted_id': bill_id})
 
     def restore_bill(self, params=None) -> dict:
@@ -1102,18 +1339,21 @@ class ApiBridge:
         if not bill:
             return self.err('账单不存在')
 
-        self.dal.execute(
-            "DELETE FROM bill_accounting WHERE bill_id = ?", (bill_id,)
-        )
-        self.dal.execute(
-            "DELETE FROM source_bills WHERE bill_id = ?", (bill_id,)
-        )
-        self.dal.execute(
-            "DELETE FROM snapshot_details WHERE bill_id = ?", (bill_id,)
-        )
-        self.dal.execute(
-            "DELETE FROM unified_bills WHERE id = ?", (bill_id,)
-        )
+        with self.dal.transaction():
+            # 先处理合并组级联（修复同组其他记录的状态）
+            self._handle_merge_group_cascade([bill_id])
+            self.dal.execute(
+                "DELETE FROM bill_accounting WHERE bill_id = ?", (bill_id,)
+            )
+            self.dal.execute(
+                "DELETE FROM source_bills WHERE bill_id = ?", (bill_id,)
+            )
+            self.dal.execute(
+                "DELETE FROM snapshot_details WHERE bill_id = ?", (bill_id,)
+            )
+            self.dal.execute(
+                "DELETE FROM unified_bills WHERE id = ?", (bill_id,)
+            )
         return self.ok({'deleted_id': bill_id})
 
     def get_deleted_bills(self, params=None) -> dict:
@@ -1148,24 +1388,32 @@ class ApiBridge:
         return self.ok({'deleted_count': total})
 
     def empty_recycle_bin(self, params=None) -> dict:
-        bills = self.dal.fetch_all(
-            "SELECT id FROM unified_bills WHERE is_deleted = 1"
-        )
-        bill_ids = [b['id'] for b in bills]
-        total = 0
-        for bill_id in bill_ids:
-            self.dal.execute(
-                "DELETE FROM bill_accounting WHERE bill_id = ?", (bill_id,)
-            )
-            self.dal.execute(
-                "DELETE FROM source_bills WHERE bill_id = ?", (bill_id,)
-            )
-            self.dal.execute(
-                "DELETE FROM snapshot_details WHERE bill_id = ?", (bill_id,)
-            )
-            total += 1
-        self.dal.execute("DELETE FROM unified_bills WHERE is_deleted = 1")
-        return self.ok({'deleted_count': total})
+        try:
+            with self.dal.transaction():
+                bills = self.dal.fetch_all(
+                    "SELECT id FROM unified_bills WHERE is_deleted = 1"
+                )
+                bill_ids = [b['id'] for b in bills]
+                if bill_ids:
+                    # 先处理合并组级联（修复同组其他记录的状态）
+                    self._handle_merge_group_cascade(bill_ids)
+                    placeholders = ', '.join(['?' for _ in bill_ids])
+                    self.dal.execute(
+                        f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
+                        tuple(bill_ids),
+                    )
+                    self.dal.execute(
+                        f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
+                        tuple(bill_ids),
+                    )
+                    self.dal.execute(
+                        f"DELETE FROM snapshot_details WHERE bill_id IN ({placeholders})",
+                        tuple(bill_ids),
+                    )
+                self.dal.execute("DELETE FROM unified_bills WHERE is_deleted = 1")
+            return self.ok({'deleted_count': len(bill_ids)})
+        except Exception as e:
+            return self.err(f'清空回收站失败: {e}')
 
     # ─── 6.2.10 批量操作与角色分配 ────────────────────────────
 
@@ -1176,110 +1424,125 @@ class ApiBridge:
         if not bill_ids:
             return self.err('未指定账单')
 
-        account = self.dal.fetch_one(
-            "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
-        )
-        if not account:
-            return self.err('账户不存在')
+        try:
+            with self.dal.transaction():
+                account = self.dal.fetch_one(
+                    "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
+                )
+                if not account:
+                    return self.err('账户不存在')
 
-        new_role_id = account['role_id']
-        new_family_id = None
-        if new_role_id:
-            primary_family = self.dal.fetch_one(
-                "SELECT family_id FROM role_families "
-                "WHERE role_id = ? AND is_primary = 1",
-                (new_role_id,),
-            )
-            if primary_family:
-                new_family_id = primary_family['family_id']
+                new_role_id = account['role_id']
+                new_family_id = None
+                if new_role_id:
+                    primary_family = self.dal.fetch_one(
+                        "SELECT family_id FROM role_families "
+                        "WHERE role_id = ? AND is_primary = 1",
+                        (new_role_id,),
+                    )
+                    if primary_family:
+                        new_family_id = primary_family['family_id']
 
-        new_assign_status = 'assigned' if new_role_id else 'pending'
+                new_assign_status = 'assigned' if new_role_id else 'pending'
 
-        snapshot_id = self.snapshot.create_snapshot(
-            'batch_reassign',
-            f'批量修改{len(bill_ids)}条账单的账户为{account_id}',
-            bill_ids,
-        )
+                snapshot_id = self.snapshot.create_snapshot(
+                    'batch_reassign',
+                    f'批量修改{len(bill_ids)}条账单的账户为{account_id}',
+                    bill_ids,
+                )
 
-        placeholders = ', '.join(['?' for _ in bill_ids])
-        self.dal.execute(
-            f"UPDATE unified_bills SET account_id = ?, role_id = ?, family_id = ?, "
-            f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
-            (account_id, new_role_id, new_family_id, new_assign_status,
-             self._now(), *bill_ids),
-        )
+                placeholders = ', '.join(['?' for _ in bill_ids])
+                self.dal.execute(
+                    f"UPDATE unified_bills SET account_id = ?, role_id = ?, family_id = ?, "
+                    f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
+                    (account_id, new_role_id, new_family_id, new_assign_status,
+                     self._now(), *bill_ids),
+                )
 
-        self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
+                self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
 
-        return self.ok({
-            'updated_count': len(bill_ids),
-            'snapshot_id': snapshot_id,
-        })
+            return self.ok({
+                'updated_count': len(bill_ids),
+                'snapshot_id': snapshot_id,
+            })
+        except Exception as e:
+            return self.err(f'批量重分配失败: {e}')
 
     def reassign_bill_family(self, params=None) -> dict:
         p = params or {}
         bill_id = p.get('bill_id')
         family_id = p.get('family_id')
-        bill = self.dal.fetch_one(
-            "SELECT role_id FROM unified_bills WHERE id = ?", (bill_id,)
-        )
-        if not bill:
-            return self.err('账单不存在')
-        if not bill['role_id']:
-            return self.err('账单未分配角色，无法变更家庭')
+        try:
+            with self.dal.transaction():
+                bill = self.dal.fetch_one(
+                    "SELECT role_id FROM unified_bills WHERE id = ?", (bill_id,)
+                )
+                if not bill:
+                    return self.err('账单不存在')
+                if not bill['role_id']:
+                    return self.err('账单未分配角色，无法变更家庭')
 
-        rf = self.dal.fetch_one(
-            "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
-            (bill['role_id'], family_id),
-        )
-        if not rf:
-            return self.err('目标家庭不是该角色关联的家庭')
+                rf = self.dal.fetch_one(
+                    "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
+                    (bill['role_id'], family_id),
+                )
+                if not rf:
+                    return self.err('目标家庭不是该角色关联的家庭')
 
-        snapshot_id = self.snapshot.create_snapshot(
-            'reassign_family',
-            f'变更账单{bill_id}的归属家庭为{family_id}',
-            [bill_id],
-        )
+                snapshot_id = self.snapshot.create_snapshot(
+                    'reassign_family',
+                    f'变更账单{bill_id}的归属家庭为{family_id}',
+                    [bill_id],
+                )
 
-        self.dal.update(
-            'unified_bills',
-            {'family_id': family_id, 'updated_at': self._now()},
-            'id = ?',
-            (bill_id,),
-        )
+                self.dal.update(
+                    'unified_bills',
+                    {'family_id': family_id, 'updated_at': self._now()},
+                    'id = ?',
+                    (bill_id,),
+                )
 
-        self.snapshot.finalize_snapshot(snapshot_id, [bill_id])
-        return self.ok()
+                self.snapshot.finalize_snapshot(snapshot_id, [bill_id])
+            return self.ok()
+        except Exception as e:
+            return self.err(f'变更账单家庭失败: {e}')
 
     def rollback_batch(self, params=None) -> dict:
         batch_id = (params or {}).get('batch_id')
         if not batch_id:
             return self.err('未指定批次')
 
-        bills = self.dal.fetch_all(
-            "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
-        )
-        bill_ids = [b['id'] for b in bills]
-        if not bill_ids:
-            return self.err('该批次无账单数据')
+        try:
+            with self.dal.transaction():
+                bills = self.dal.fetch_all(
+                    "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
+                )
+                bill_ids = [b['id'] for b in bills]
+                if not bill_ids:
+                    return self.err('该批次无账单数据')
 
-        placeholders = ', '.join(['?' for _ in bill_ids])
-        self.dal.execute(
-            f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
-            tuple(bill_ids),
-        )
-        self.dal.execute(
-            f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
-            tuple(bill_ids),
-        )
-        self.dal.execute(
-            "DELETE FROM unified_bills WHERE batch_id = ?", (batch_id,),
-        )
-        self.dal.execute(
-            "DELETE FROM import_batches WHERE batch_id = ?", (batch_id,),
-        )
+                # 先处理合并组级联（修复同组其他记录的状态）
+                self._handle_merge_group_cascade(bill_ids)
 
-        return self.ok({'deleted_count': len(bill_ids)})
+                placeholders = ', '.join(['?' for _ in bill_ids])
+                self.dal.execute(
+                    f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
+                    tuple(bill_ids),
+                )
+                self.dal.execute(
+                    f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
+                    tuple(bill_ids),
+                )
+                self.dal.execute(
+                    "DELETE FROM unified_bills WHERE batch_id = ?", (batch_id,),
+                )
+                self.dal.execute(
+                    "DELETE FROM import_batches WHERE batch_id = ?", (batch_id,),
+                )
+
+            return self.ok({'deleted_count': len(bill_ids)})
+        except Exception as e:
+            return self.err(f'回退失败: {e}')
 
     # ─── 6.2.11 角色-家庭关联 ────────────────────────────
 
@@ -1297,33 +1560,37 @@ class ApiBridge:
         role_id = p.get('role_id')
         family_id = p.get('family_id')
         is_primary = p.get('is_primary', 0)
-        self.dal.insert_or_ignore('role_families', {
-            'role_id': role_id,
-            'family_id': family_id,
-            'is_primary': is_primary,
-        })
+        try:
+            with self.dal.transaction():
+                self.dal.insert_or_ignore('role_families', {
+                    'role_id': role_id,
+                    'family_id': family_id,
+                    'is_primary': is_primary,
+                })
 
-        if is_primary == 1:
-            bills = self.dal.fetch_all(
-                "SELECT id FROM unified_bills WHERE role_id = ? AND is_deleted = 0",
-                (role_id,),
-            )
-            bill_ids = [b['id'] for b in bills]
-            if bill_ids:
-                snapshot_id = self.snapshot.create_snapshot(
-                    'role_family_change',
-                    f'角色{role_id}主要家庭变更，级联更新{len(bill_ids)}条账单',
-                    bill_ids,
-                )
-                placeholders = ', '.join(['?' for _ in bill_ids])
-                self.dal.execute(
-                    f"UPDATE unified_bills SET family_id = ?, updated_at = ? "
-                    f"WHERE id IN ({placeholders})",
-                    (family_id, self._now(), *bill_ids),
-                )
-                self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
+                if is_primary == 1:
+                    bills = self.dal.fetch_all(
+                        "SELECT id FROM unified_bills WHERE role_id = ? AND is_deleted = 0",
+                        (role_id,),
+                    )
+                    bill_ids = [b['id'] for b in bills]
+                    if bill_ids:
+                        snapshot_id = self.snapshot.create_snapshot(
+                            'role_family_change',
+                            f'角色{role_id}主要家庭变更，级联更新{len(bill_ids)}条账单',
+                            bill_ids,
+                        )
+                        placeholders = ', '.join(['?' for _ in bill_ids])
+                        self.dal.execute(
+                            f"UPDATE unified_bills SET family_id = ?, updated_at = ? "
+                            f"WHERE id IN ({placeholders})",
+                            (family_id, self._now(), *bill_ids),
+                        )
+                        self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
 
-        return self.ok()
+            return self.ok()
+        except Exception as e:
+            return self.err(f'添加角色-家庭关联失败: {e}')
 
     def remove_role_family(self, params=None) -> dict:
         p = params or {}
@@ -1391,11 +1658,11 @@ class ApiBridge:
         外键依赖关系（删除顺序必须严格遵守）：
           unified_bills.source_bill_id → source_bills(id)  [循环]
           bill_accounting.bill_id → unified_bills(id)
-          bill_accounting.merged_to_id → unified_bills(id)
+          bill_accounting.merged_group_id 关联同一合并组的记录
           source_bills.bill_id → unified_bills(id)
           collection_records.batch_id → import_batches(batch_id)
         正确顺序：
-          1. 解除 merged_to_id 引用
+          1. 解除合并组关联（merged_group_id）
           2. 解除 source_bill_id 循环引用
           3. 删除 bill_accounting（引用 unified_bills）
           4. 删除 snapshot_details
@@ -1409,16 +1676,15 @@ class ApiBridge:
             return self.err('未指定采集记录')
 
         deleted_count = 0
-        conn = self.dal.conn
 
         try:
-            with self.dal._lock:
+            with self.dal.transaction():
                 # 收集所有 batch_id
                 batch_ids = []
                 for record_id in record_ids:
-                    record = conn.execute(
+                    record = self.dal.fetch_one(
                         "SELECT batch_id FROM collection_records WHERE id = ?", (record_id,)
-                    ).fetchone()
+                    )
                     if record and record['batch_id']:
                         batch_ids.append(record['batch_id'])
 
@@ -1428,43 +1694,41 @@ class ApiBridge:
                 # 收集所有 bill_ids
                 all_bill_ids = []
                 for batch_id in batch_ids:
-                    bills = conn.execute(
+                    bills = self.dal.fetch_all(
                         "SELECT id FROM unified_bills WHERE batch_id = ?", (batch_id,)
-                    ).fetchall()
+                    )
                     all_bill_ids.extend([b['id'] for b in bills])
 
                 if all_bill_ids:
                     placeholders = ', '.join(['?' for _ in all_bill_ids])
                     bill_params = tuple(all_bill_ids)
 
-                    # 1. 解除 merged_to_id 引用（其他账单可能合并到这些账单）
-                    conn.execute(
-                        f"UPDATE bill_accounting SET merged_to_id = NULL WHERE merged_to_id IN ({placeholders})",
-                        bill_params
-                    )
+                    # 1. 解除合并组关联（merged_group_id）
+                    # 使用统一的级联处理：merged_target → normal, merged_source → orphan
+                    self._handle_merge_group_cascade(all_bill_ids)
                     # 2. 解除 source_bill_id 循环引用（unified_bills → source_bills）
-                    conn.execute(
+                    self.dal.execute(
                         f"UPDATE unified_bills SET source_bill_id = NULL WHERE id IN ({placeholders})",
                         bill_params
                     )
                     # 3. 删除 bill_accounting（引用 unified_bills.id）
-                    conn.execute(
+                    self.dal.execute(
                         f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
                         bill_params
                     )
                     # 4. 删除 snapshot_details
-                    conn.execute(
+                    self.dal.execute(
                         f"DELETE FROM snapshot_details WHERE bill_id IN ({placeholders})",
                         bill_params
                     )
                     # 5. 删除 source_bills（引用 unified_bills.id，此时已无反向引用）
-                    conn.execute(
+                    self.dal.execute(
                         f"DELETE FROM source_bills WHERE bill_id IN ({placeholders})",
                         bill_params
                     )
                     # 6. 删除 unified_bills（此时无表再引用它）
                     batch_placeholders = ', '.join(['?' for _ in batch_ids])
-                    conn.execute(
+                    self.dal.execute(
                         f"DELETE FROM unified_bills WHERE batch_id IN ({batch_placeholders})",
                         tuple(batch_ids)
                     )
@@ -1472,19 +1736,16 @@ class ApiBridge:
 
                 # 7. 解除 collection_records 对 import_batches 的外键引用
                 batch_placeholders = ', '.join(['?' for _ in batch_ids])
-                conn.execute(
+                self.dal.execute(
                     f"UPDATE collection_records SET batch_id = NULL, status = 'pending', parse_result = NULL WHERE batch_id IN ({batch_placeholders})",
                     tuple(batch_ids)
                 )
                 # 8. 删除 import_batches
-                conn.execute(
+                self.dal.execute(
                     f"DELETE FROM import_batches WHERE batch_id IN ({batch_placeholders})",
                     tuple(batch_ids)
                 )
 
-                conn.commit()
-
             return self.ok({'deleted_count': deleted_count})
         except Exception as e:
-            conn.rollback()
             return self.err(f'删除失败: {e}')

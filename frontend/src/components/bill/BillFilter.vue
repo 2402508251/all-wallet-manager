@@ -69,9 +69,9 @@
 
       <el-select v-model="localFilter.merge_status" placeholder="合并状态" clearable size="default">
         <el-option label="正常" value="normal" />
-        <el-option label="孤儿" value="orphan" />
-        <el-option label="已合并" value="merged" />
-        <el-option label="合并源" value="merged_source" />
+        <el-option label="待合并（孤儿）" value="orphan" />
+        <el-option label="已合并（发起方）" value="merged_source" />
+        <el-option label="已合并（真实支付者）" value="merged_target" />
       </el-select>
 
       <el-input

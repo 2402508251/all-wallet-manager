@@ -6,6 +6,7 @@
       :records="accountingStore.orphanRecords"
       :total="accountingStore.orphanTotal"
       @confirm="handleConfirm"
+      @merge="handleMerge"
       @page-change="handleOrphanPage"
     />
 
@@ -30,6 +31,7 @@ const accountingStore = useAccountingStore()
 
 onMounted(() => {
   accountingStore.loadOrphanRecords()
+  accountingStore.loadMergedRecords()
 })
 
 const orphanTotal = computed(() => accountingStore.orphanTotal)
@@ -46,10 +48,26 @@ async function handleConfirm(bill) {
   } catch { /* 取消 */ }
 }
 
+async function handleMerge(bill) {
+  try {
+    await ElMessageBox.confirm(
+      `尝试为此记录(${bill.counterparty}, ¥${(bill.amount_cents / 100).toFixed(2)})查找匹配的银行卡记录并合并？`,
+      '尝试合并',
+      { type: 'info' }
+    )
+    const result = await accountingStore.tryMergeOrphan(bill.id)
+    if (result.merged) {
+      ElMessage.success('合并成功')
+    } else {
+      ElMessage.info('未找到匹配的银行卡记录')
+    }
+  } catch { /* 取消 */ }
+}
+
 async function handleUndo(bill) {
   try {
     await ElMessageBox.confirm('确定要撤销此合并吗？将恢复原始的两条记录。', '确认撤销', { type: 'warning' })
-    await accountingStore.undoMerge(bill.merged_source_id || bill.id)
+    await accountingStore.undoMerge(bill.merged_group_id)
     ElMessage.success('合并已撤销')
   } catch { /* 取消 */ }
 }

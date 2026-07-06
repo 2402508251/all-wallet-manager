@@ -17,8 +17,8 @@
       <el-descriptions-item label="转账配对号">
         {{ bill.transfer_link_id || '未配对' }}
       </el-descriptions-item>
-      <el-descriptions-item v-if="bill.merged_to_id" label="合并目标">
-        账单 #{{ bill.merged_to_id }}
+      <el-descriptions-item v-if="bill.merged_group_id" label="合并组ID">
+        {{ bill.merged_group_id }}
       </el-descriptions-item>
       <el-descriptions-item label="分配状态">
         <el-tag size="small" :type="assignStatusType(bill.assign_status)">
@@ -47,8 +47,8 @@ function mergeStatusLabel(status) {
   const map = {
     normal: '正常',
     orphan: '待合并（孤立）',
-    merged_source: '已合并（源）',
-    merged: '已合并（目标）',
+    merged_source: '已合并（发起方）',
+    merged_target: '已合并（真实支付者）',
   }
   return map[status] || status
 }
@@ -58,7 +58,7 @@ function mergeStatusType(status) {
     normal: 'success',
     orphan: 'warning',
     merged_source: 'info',
-    merged: 'primary',
+    merged_target: 'primary',
   }
   return map[status] || 'info'
 }

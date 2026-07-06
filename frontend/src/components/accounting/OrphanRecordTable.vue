@@ -18,8 +18,11 @@
         </template>
       </el-table-column>
       <el-table-column prop="payment_method" label="支付方式" width="100" />
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
+          <el-button link type="success" size="small" @click="$emit('merge', row)">
+            尝试合并
+          </el-button>
           <el-button link type="primary" size="small" @click="$emit('confirm', row)">
             确认独立计入
           </el-button>
@@ -45,7 +48,7 @@ defineProps({
   total: { type: Number, default: 0 },
 })
 
-defineEmits(['confirm', 'page-change'])
+defineEmits(['confirm', 'merge', 'page-change'])
 
 function formatTime(timeStr) {
   if (!timeStr) return ''

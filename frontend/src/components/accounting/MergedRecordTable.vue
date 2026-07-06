@@ -16,6 +16,11 @@
         -¥{{ (row.amount_cents / 100).toFixed(2) }}
       </template>
     </el-table-column>
+    <el-table-column label="真实支付者" min-width="120">
+      <template #default="{ row }">
+        <el-tag size="small" type="info">{{ row.real_payer_name || '未知账户' }}</el-tag>
+      </template>
+    </el-table-column>
     <el-table-column label="操作" width="120" fixed="right">
       <template #default="{ row }">
         <el-button link type="warning" size="small" @click="$emit('undo', row)">

@@ -14,8 +14,8 @@ class ReParser:
     def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager):
         self.db = db_manager
         self.config = config_manager
-        self.snapshot = SnapshotEngine(db_manager)
         self.dal = DAL(db_manager)
+        self.snapshot = SnapshotEngine(db_manager, dal=self.dal)
 
     def reparse(self, scope: dict) -> dict:
         scope_type = scope.get('type', 'all')

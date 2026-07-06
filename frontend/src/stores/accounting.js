@@ -96,9 +96,26 @@ export const useAccountingStore = defineStore('accounting', {
       await this.loadOrphanRecords()
     },
 
-    async undoMerge(mergedSourceId) {
-      await call('undo_merge', { merged_source_id: mergedSourceId })
+    async tryMergeOrphan(billId) {
+      const result = await call('try_merge_orphan', { bill_id: billId })
       await this.loadOrphanRecords()
+      await this.loadMergedRecords()
+      return result
+    },
+
+    async undoMerge(mergedGroupId) {
+      await call('undo_merge', { merged_group_id: mergedGroupId })
+      await this.loadOrphanRecords()
+      await this.loadMergedRecords()
+    },
+
+    async loadMergedRecords(page, pageSize) {
+      const data = await call('get_merged_records', {
+        page: page || 1,
+        page_size: pageSize || 50,
+      })
+      this.mergedRecords = data.list
+      this.mergedTotal = data.total
     },
 
     // ─── 转账配对 ─────────────────────────

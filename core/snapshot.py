@@ -19,14 +19,14 @@ class SnapshotEngine:
         ],
         'bill_accounting': [
             'transfer_link_id', 'is_credit', 'credit_account_id',
-            'merge_status', 'merged_to_id',
+            'merge_status', 'merged_group_id', 'real_payer_account_id',
             'original_counterparty', 'original_product_desc',
         ],
     }
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, dal: DAL = None):
         self.db = db_manager
-        self.dal = DAL(db_manager)
+        self.dal = dal if dal else DAL(db_manager)
 
     def create_snapshot(
         self,
@@ -42,43 +42,44 @@ class SnapshotEngine:
         if not affected_record_ids:
             return -1
 
-        now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
-        snapshot_id = self.dal.insert('snapshots', {
-            'snapshot_type': snapshot_type,
-            'description': description,
-            'bill_count': len(affected_record_ids),
-            'created_at': now,
-        })
+        with self.dal.transaction():
+            now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+            snapshot_id = self.dal.insert('snapshots', {
+                'snapshot_type': snapshot_type,
+                'description': description,
+                'bill_count': len(affected_record_ids),
+                'created_at': now,
+            })
 
-        for bill_id in affected_record_ids:
-            for table_name, fields in self.TRACKED_TABLES.items():
-                if table_name == 'unified_bills':
-                    pk_col = 'id'
-                    pk_val = bill_id
-                elif table_name == 'bill_accounting':
-                    pk_col = 'bill_id'
-                    pk_val = bill_id
-                else:
-                    continue
+            for bill_id in affected_record_ids:
+                for table_name, fields in self.TRACKED_TABLES.items():
+                    if table_name == 'unified_bills':
+                        pk_col = 'id'
+                        pk_val = bill_id
+                    elif table_name == 'bill_accounting':
+                        pk_col = 'bill_id'
+                        pk_val = bill_id
+                    else:
+                        continue
 
-                row = self.dal.fetch_one(
-                    f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
-                    (pk_val,),
-                )
-                if row is None:
-                    continue
+                    row = self.dal.fetch_one(
+                        f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
+                        (pk_val,),
+                    )
+                    if row is None:
+                        continue
 
-                for field_name in fields:
-                    val = row[field_name] if field_name in row.keys() else None
-                    self.dal.insert('snapshot_details', {
-                        'snapshot_id': snapshot_id,
-                        'bill_id': bill_id,
-                        'table_name': table_name,
-                        'field_name': field_name,
-                        'old_value': str(val) if val is not None else None,
-                        'new_value': None,
-                        'is_deleted_after': 0,
-                    })
+                    for field_name in fields:
+                        val = row[field_name] if field_name in row.keys() else None
+                        self.dal.insert('snapshot_details', {
+                            'snapshot_id': snapshot_id,
+                            'bill_id': bill_id,
+                            'table_name': table_name,
+                            'field_name': field_name,
+                            'old_value': str(val) if val is not None else None,
+                            'new_value': None,
+                            'is_deleted_after': 0,
+                        })
 
         return snapshot_id
 
@@ -97,41 +98,42 @@ class SnapshotEngine:
             return 0
 
         updated = 0
-        for bill_id in affected_record_ids:
-            for table_name, fields in self.TRACKED_TABLES.items():
-                if table_name == 'unified_bills':
-                    pk_col = 'id'
-                    pk_val = bill_id
-                elif table_name == 'bill_accounting':
-                    pk_col = 'bill_id'
-                    pk_val = bill_id
-                else:
-                    continue
+        with self.dal.transaction():
+            for bill_id in affected_record_ids:
+                for table_name, fields in self.TRACKED_TABLES.items():
+                    if table_name == 'unified_bills':
+                        pk_col = 'id'
+                        pk_val = bill_id
+                    elif table_name == 'bill_accounting':
+                        pk_col = 'bill_id'
+                        pk_val = bill_id
+                    else:
+                        continue
 
-                row = self.dal.fetch_one(
-                    f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
-                    (pk_val,),
-                )
-
-                if row is None:
-                    self.dal.execute(
-                        "UPDATE snapshot_details SET is_deleted_after = 1 "
-                        "WHERE snapshot_id = ? AND bill_id = ? AND table_name = ?",
-                        (snapshot_id, bill_id, table_name),
+                    row = self.dal.fetch_one(
+                        f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
+                        (pk_val,),
                     )
-                    updated += 1
-                    continue
 
-                for field_name in fields:
-                    val = row[field_name] if field_name in row.keys() else None
-                    new_val_str = str(val) if val is not None else None
-                    self.dal.execute(
-                        "UPDATE snapshot_details SET new_value = ? "
-                        "WHERE snapshot_id = ? AND bill_id = ? "
-                        "AND table_name = ? AND field_name = ?",
-                        (new_val_str, snapshot_id, bill_id, table_name, field_name),
-                    )
-                    updated += 1
+                    if row is None:
+                        self.dal.execute(
+                            "UPDATE snapshot_details SET is_deleted_after = 1 "
+                            "WHERE snapshot_id = ? AND bill_id = ? AND table_name = ?",
+                            (snapshot_id, bill_id, table_name),
+                        )
+                        updated += 1
+                        continue
+
+                    for field_name in fields:
+                        val = row[field_name] if field_name in row.keys() else None
+                        new_val_str = str(val) if val is not None else None
+                        self.dal.execute(
+                            "UPDATE snapshot_details SET new_value = ? "
+                            "WHERE snapshot_id = ? AND bill_id = ? "
+                            "AND table_name = ? AND field_name = ?",
+                            (new_val_str, snapshot_id, bill_id, table_name, field_name),
+                        )
+                        updated += 1
 
         return updated
 
@@ -194,27 +196,28 @@ class SnapshotEngine:
             if d['is_deleted_after'] == 1:
                 deleted_records.add(key)
 
-        restored_count = 0
-        for (bill_id, table_name), fields in grouped.items():
-            if (bill_id, table_name) in deleted_records:
-                continue
+        with self.dal.transaction():
+            restored_count = 0
+            for (bill_id, table_name), fields in grouped.items():
+                if (bill_id, table_name) in deleted_records:
+                    continue
 
-            if table_name == 'unified_bills':
-                pk_col = 'id'
-                pk_val = bill_id
-            elif table_name == 'bill_accounting':
-                pk_col = 'bill_id'
-                pk_val = bill_id
-            else:
-                continue
+                if table_name == 'unified_bills':
+                    pk_col = 'id'
+                    pk_val = bill_id
+                elif table_name == 'bill_accounting':
+                    pk_col = 'bill_id'
+                    pk_val = bill_id
+                else:
+                    continue
 
-            self.dal.update(
-                table_name,
-                fields,
-                f'{pk_col} = ?',
-                (pk_val,),
-            )
-            restored_count += 1
+                self.dal.update(
+                    table_name,
+                    fields,
+                    f'{pk_col} = ?',
+                    (pk_val,),
+                )
+                restored_count += 1
 
         return {
             'success': True,
@@ -244,8 +247,9 @@ class SnapshotEngine:
         if snapshot is None:
             return False
 
-        self.dal.delete('snapshot_details', 'snapshot_id = ?', (snapshot_id,))
-        self.dal.delete('snapshots', 'id = ?', (snapshot_id,))
+        with self.dal.transaction():
+            self.dal.delete('snapshot_details', 'snapshot_id = ?', (snapshot_id,))
+            self.dal.delete('snapshots', 'id = ?', (snapshot_id,))
         return True
 
     def cleanup_old_snapshots(self, keep_count: int = 50) -> int:
@@ -262,12 +266,13 @@ class SnapshotEngine:
             return 0
 
         cutoff_id = cutoff['id']
-        old_details = self.dal.fetch_all(
-            "SELECT DISTINCT snapshot_id FROM snapshot_details WHERE snapshot_id < ?",
-            (cutoff_id,),
-        )
-        for d in old_details:
-            self.dal.delete('snapshot_details', 'snapshot_id = ?', (d['snapshot_id'],))
+        with self.dal.transaction():
+            old_details = self.dal.fetch_all(
+                "SELECT DISTINCT snapshot_id FROM snapshot_details WHERE snapshot_id < ?",
+                (cutoff_id,),
+            )
+            for d in old_details:
+                self.dal.delete('snapshot_details', 'snapshot_id = ?', (d['snapshot_id'],))
 
-        deleted = self.dal.delete('snapshots', 'id < ?', (cutoff_id,))
+            deleted = self.dal.delete('snapshots', 'id < ?', (cutoff_id,))
         return deleted
