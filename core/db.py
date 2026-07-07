@@ -10,7 +10,7 @@ import uuid
 
 
 class DatabaseManager:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -32,6 +32,7 @@ class DatabaseManager:
             current_version = self._get_version()
             if current_version < self.SCHEMA_VERSION:
                 self._migrate(current_version, self.SCHEMA_VERSION)
+                self._ensure_schema_v4()
 
     def _get_or_create_conn(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -92,7 +93,6 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS role_families (
             role_id INTEGER NOT NULL,
             family_id INTEGER NOT NULL,
-            is_primary INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (role_id, family_id),
             FOREIGN KEY (role_id) REFERENCES roles(id),
             FOREIGN KEY (family_id) REFERENCES families(id)
@@ -104,10 +104,27 @@ class DatabaseManager:
             account_tag TEXT,
             channel TEXT NOT NULL,
             role_id INTEGER,
+            merged_into_account_id INTEGER,
             balance_cents INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (role_id) REFERENCES roles(id),
+            FOREIGN KEY (merged_into_account_id) REFERENCES accounts(id),
             UNIQUE (account_tag, channel)
+        );
+
+        CREATE TABLE IF NOT EXISTS account_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            alias_type TEXT NOT NULL,
+            alias_value TEXT NOT NULL,
+            source_kind TEXT NOT NULL DEFAULT 'manual',
+            source_account_id INTEGER,
+            merge_session_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts(id),
+            FOREIGN KEY (source_account_id) REFERENCES accounts(id),
+            UNIQUE (account_id, channel, alias_type, alias_value)
         );
 
         CREATE TABLE IF NOT EXISTS credit_accounts (
@@ -137,7 +154,6 @@ class DatabaseManager:
             remark TEXT,
             account_id INTEGER,
             role_id INTEGER,
-            family_id INTEGER,
             category_id INTEGER,
             assign_status TEXT NOT NULL DEFAULT 'pending',
             is_deleted INTEGER NOT NULL DEFAULT 0,
@@ -149,7 +165,6 @@ class DatabaseManager:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (account_id) REFERENCES accounts(id),
             FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (family_id) REFERENCES families(id),
             FOREIGN KEY (category_id) REFERENCES bill_categories(id),
             FOREIGN KEY (source_bill_id) REFERENCES source_bills(id),
             UNIQUE (channel, channel_trade_no)
@@ -269,12 +284,15 @@ class DatabaseManager:
         CREATE INDEX IF NOT EXISTS idx_bills_trade_time ON unified_bills(trade_time);
         CREATE INDEX IF NOT EXISTS idx_bills_account_id ON unified_bills(account_id);
         CREATE INDEX IF NOT EXISTS idx_bills_role_id ON unified_bills(role_id);
-        CREATE INDEX IF NOT EXISTS idx_bills_family_id ON unified_bills(family_id);
         CREATE INDEX IF NOT EXISTS idx_bills_category_id ON unified_bills(category_id);
         CREATE INDEX IF NOT EXISTS idx_bills_assign_status ON unified_bills(assign_status);
         CREATE INDEX IF NOT EXISTS idx_bills_batch_id ON unified_bills(batch_id);
         CREATE INDEX IF NOT EXISTS idx_bills_is_deleted ON unified_bills(is_deleted);
         CREATE INDEX IF NOT EXISTS idx_bills_is_system ON unified_bills(is_system);
+        CREATE INDEX IF NOT EXISTS idx_accounts_merged_into ON accounts(merged_into_account_id);
+        CREATE INDEX IF NOT EXISTS idx_account_aliases_lookup ON account_aliases(channel, alias_type, alias_value);
+        CREATE INDEX IF NOT EXISTS idx_account_aliases_account ON account_aliases(account_id);
+        CREATE INDEX IF NOT EXISTS idx_account_aliases_merge_session ON account_aliases(merge_session_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_accounting_bill_id ON bill_accounting(bill_id);
         CREATE INDEX IF NOT EXISTS idx_accounting_merge_status ON bill_accounting(merge_status);
         CREATE INDEX IF NOT EXISTS idx_accounting_merged_group ON bill_accounting(merged_group_id);
@@ -316,7 +334,7 @@ class DatabaseManager:
             "INSERT OR IGNORE INTO roles (id, name, role_type) VALUES (1, '未分配', 'personal')"
         )
         conn.execute(
-            "INSERT OR IGNORE INTO role_families (role_id, family_id, is_primary) VALUES (1, 1, 1)"
+            "INSERT OR IGNORE INTO role_families (role_id, family_id) VALUES (1, 1)"
         )
 
     def _get_version(self) -> int:
@@ -329,8 +347,6 @@ class DatabaseManager:
 
     def _migrate(self, from_version: int, to_version: int) -> None:
         conn = self.get_connection()
-        if from_version < 2:
-            self._migrate_v1_to_v2(conn)
         if from_version < 3:
             self._migrate_v2_to_v3(conn)
         # 迁移完成后设置版本
@@ -341,50 +357,42 @@ class DatabaseManager:
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(r[1] == column for r in rows)
 
-    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+    def _ensure_schema_v4(self) -> None:
+        """确保账户别名与逻辑归并字段存在。
+
+        项目当前主要通过重建数据库应用 schema；这里保留轻量兜底，避免已有开发库
+        因缺少新字段无法启动。
+        """
+        conn = self.get_connection()
+        if not self._column_exists(conn, 'accounts', 'merged_into_account_id'):
+            conn.execute("ALTER TABLE accounts ADD COLUMN merged_into_account_id INTEGER")
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS role_families (
-            role_id INTEGER NOT NULL,
-            family_id INTEGER NOT NULL,
-            is_primary INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (role_id, family_id),
-            FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (family_id) REFERENCES families(id)
-        )
+            CREATE TABLE IF NOT EXISTS account_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                channel TEXT NOT NULL,
+                alias_type TEXT NOT NULL,
+                alias_value TEXT NOT NULL,
+                source_kind TEXT NOT NULL DEFAULT 'manual',
+                source_account_id INTEGER,
+                merge_session_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES accounts(id),
+                FOREIGN KEY (source_account_id) REFERENCES accounts(id),
+                UNIQUE (account_id, channel, alias_type, alias_value)
+            )
         """)
-
-        if self._column_exists(conn, 'roles', 'family_id'):
-            conn.execute("""
-            INSERT OR IGNORE INTO role_families (role_id, family_id, is_primary)
-                SELECT id, family_id, 1 FROM roles WHERE family_id IS NOT NULL
-            """)
-
-        if not self._column_exists(conn, 'unified_bills', 'family_id'):
-            conn.execute("ALTER TABLE unified_bills ADD COLUMN family_id INTEGER REFERENCES families(id)")
-
-        if not self._column_exists(conn, 'unified_bills', 'is_system'):
-            conn.execute("ALTER TABLE unified_bills ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0")
-
-        conn.execute("""
-        UPDATE unified_bills SET family_id = (
-            SELECT rf.family_id FROM accounts a
-            JOIN role_families rf ON rf.role_id = a.role_id AND rf.is_primary = 1
-            WHERE a.id = unified_bills.account_id
-        ) WHERE family_id IS NULL AND account_id IS NOT NULL
-        """)
-
-        if not self._column_exists(conn, 'bill_accounting', 'original_counterparty'):
-            conn.execute("ALTER TABLE bill_accounting ADD COLUMN original_counterparty TEXT")
-
-        if not self._column_exists(conn, 'bill_accounting', 'original_product_desc'):
-            conn.execute("ALTER TABLE bill_accounting ADD COLUMN original_product_desc TEXT")
-
-        if not self._column_exists(conn, 'snapshot_details', 'is_deleted_after'):
-            conn.execute("ALTER TABLE snapshot_details ADD COLUMN is_deleted_after INTEGER NOT NULL DEFAULT 0")
-
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_role_id ON unified_bills(role_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_is_system ON unified_bills(is_system)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_role_families_family_id ON role_families(family_id)")
+        for column_name, column_sql in (
+            ('source_kind', "TEXT NOT NULL DEFAULT 'manual'"),
+            ('source_account_id', 'INTEGER'),
+            ('merge_session_id', 'TEXT'),
+        ):
+            if not self._column_exists(conn, 'account_aliases', column_name):
+                conn.execute(f"ALTER TABLE account_aliases ADD COLUMN {column_name} {column_sql}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_merged_into ON accounts(merged_into_account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_lookup ON account_aliases(channel, alias_type, alias_value)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_account ON account_aliases(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_merge_session ON account_aliases(merge_session_id)")
 
     def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
         """迁移 v2 到 v3：跨平台合并机制重构（不删除账单，使用 merged_group_id）"""

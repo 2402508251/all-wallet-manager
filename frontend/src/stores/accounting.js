@@ -78,7 +78,7 @@ export const useAccountingStore = defineStore('accounting', {
       this.repayRecords = data.list
     },
 
-    // ─── 跨平台合并 ────────────────────────
+    // ─── 真实支付者溯源 ────────────────────────
     async loadOrphanRecords(page, pageSize) {
       if (page !== undefined) this.orphanPage = page
       if (pageSize !== undefined) this.orphanPageSize = pageSize

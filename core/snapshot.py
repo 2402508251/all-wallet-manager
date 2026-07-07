@@ -14,7 +14,7 @@ class SnapshotEngine:
         'unified_bills': [
             'channel', 'trade_time', 'trade_type', 'direction', 'amount_cents',
             'counterparty', 'product_desc', 'payment_method', 'status',
-            'channel_trade_no', 'remark', 'account_id', 'family_id',
+            'channel_trade_no', 'remark', 'account_id',
             'role_id', 'category_id', 'assign_status', 'is_deleted', 'is_system',
         ],
         'bill_accounting': [

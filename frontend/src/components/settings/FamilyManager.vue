@@ -19,7 +19,6 @@
       <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openDialog(row)">编辑</el-button>
-          <el-button v-if="!row.is_default" link type="primary" size="small" @click="setDefault(row)">设为默认</el-button>
           <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -99,15 +98,6 @@ async function handleSave() {
     ElMessage.error(e.message)
   } finally {
     saving.value = false
-  }
-}
-
-async function setDefault(row) {
-  try {
-    await systemStore.updateFamily(row.id, { is_default: 1 })
-    ElMessage.success(`已设为默认家庭: ${row.name}`)
-  } catch (e) {
-    ElMessage.error(e.message)
   }
 }
 

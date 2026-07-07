@@ -7,7 +7,7 @@
         <el-tab-pane label="信用消费管理" name="credit">
           <CreditManager />
         </el-tab-pane>
-        <el-tab-pane label="跨平台合并" name="merge">
+        <el-tab-pane label="真实支付者溯源" name="merge">
           <CrossPlatformMerge />
         </el-tab-pane>
         <el-tab-pane label="转账配对" name="transfer">

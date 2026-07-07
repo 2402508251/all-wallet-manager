@@ -12,7 +12,7 @@
 
       <el-select
         :model-value="filter.family_id"
-        placeholder="家庭"
+        placeholder="家庭视角"
         clearable
         size="default"
         @update:model-value="handleFamilyChange"

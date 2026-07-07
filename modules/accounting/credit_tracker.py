@@ -65,7 +65,7 @@ class CreditTracker:
         - is_system: 1
         - source_bill_id: NULL（系统生成，无源账单）
         - account_id: 信用账户关联的资金账户
-        - role_id/family_id/assign_status: 从镜像账户派生
+        - role_id/assign_status: 从镜像账户派生
         """
         mirror = dict(repayment)
         mirror['direction'] = 'income' if repayment['direction'] == 'expense' else 'expense'
@@ -89,17 +89,9 @@ class CreditTracker:
                 )
                 if account and account['role_id']:
                     mirror['role_id'] = account['role_id']
-                    primary_family = self.dal.fetch_one(
-                        "SELECT family_id FROM role_families "
-                        "WHERE role_id = ? AND is_primary = 1",
-                        (account['role_id'],),
-                    )
-                    if primary_family:
-                        mirror['family_id'] = primary_family['family_id']
                     mirror['assign_status'] = 'assigned'
                 else:
                     mirror['role_id'] = None
-                    mirror['family_id'] = None
                     mirror['assign_status'] = 'pending'
 
         for key in ('id', 'created_at', 'updated_at'):

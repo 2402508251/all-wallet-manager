@@ -54,25 +54,55 @@ class AccountExtractor:
         for pm in payment_methods:
             pm_type = self._classify_wechat_payment_method(pm)
 
+            alias_candidates = [nickname] if nickname and nickname != '未知用户' else []
+
             if pm_type == 'bank':
                 card_suffix = self._extract_card_suffix(pm)
                 bank_name = self._extract_bank_name(pm)
                 tag = f"wechat-{nickname}-{bank_name}_{card_suffix}" if bank_name and card_suffix else f"wechat-{nickname}-{card_suffix}"
                 name = f"微信-{nickname}-{pm}"
-                bank_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+                bank_accounts.append({
+                    'tag': tag,
+                    'name': name,
+                    'payment_method': pm,
+                    'payment_method_type': pm_type,
+                    'card_suffix': card_suffix,
+                    'bank_name': bank_name,
+                    'alias_candidates': alias_candidates,
+                })
                 has_bank_account = True
             elif pm_type == 'credit':
                 tag = f"wechat-{nickname}-{pm}"
                 name = f"微信-{nickname}-{pm}"
-                credit_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+                credit_accounts.append({
+                    'tag': tag,
+                    'name': name,
+                    'payment_method': pm,
+                    'payment_method_type': pm_type,
+                    'alias_candidates': alias_candidates,
+                })
             elif pm_type == 'balance':
                 tag = f"wechat-{nickname}-{pm}"
                 name = f"微信-{nickname}-{pm}"
-                balance_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+                balance_accounts.append({
+                    'tag': tag,
+                    'name': name,
+                    'payment_method': pm,
+                    'payment_method_type': pm_type,
+                    'alias_candidates': alias_candidates,
+                })
             elif pm_type == 'family':
+                family_payer = self._extract_family_card_name(pm)
                 tag = f"wechat-{nickname}-{pm}"
                 name = f"微信-{nickname}-{pm}"
-                family_accounts.append({'tag': tag, 'name': name, 'payment_method': pm})
+                family_accounts.append({
+                    'tag': tag,
+                    'name': name,
+                    'payment_method': pm,
+                    'payment_method_type': pm_type,
+                    'family_card_payer_name': family_payer,
+                    'alias_candidates': [v for v in (nickname, family_payer) if v and v != '未知用户'],
+                })
             elif pm_type == 'discount':
                 # 非真实付款统一一个账户
                 pass  # 最后统一添加
@@ -88,6 +118,8 @@ class AccountExtractor:
             'tag': f"wechat-{nickname}-其他",
             'name': f"微信-{nickname}-其他优惠",
             'payment_method': '_discount_',
+            'payment_method_type': 'discount',
+            'alias_candidates': [nickname] if nickname and nickname != '未知用户' else [],
         })
 
         return {
@@ -490,6 +522,26 @@ class AccountExtractor:
         match = re.match(r'^([^\s]+银行)', pm_clean)
         if match:
             return match.group(1)
+        return ''
+
+    def _extract_family_card_name(self, payment_method: str) -> str:
+        """从亲属卡支付方式中尽量提取代付者/持卡人昵称。"""
+        text = str(payment_method or '').strip()
+        if not text or '亲属卡' not in text:
+            return ''
+
+        patterns = (
+            r'([^\s（）()，,：:]+)的亲属卡',
+            r'亲属卡[（(]([^）)]+)[）)]',
+            r'亲属卡[：:]\s*([^\s，,]+)',
+            r'亲属卡-([^\s，,]+)',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                name = match.group(1).strip()
+                if name and name not in ('亲属卡', '支付'):
+                    return name
         return ''
 
     def _clean_payment_method(self, payment_method: str) -> str:

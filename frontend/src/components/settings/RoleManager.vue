@@ -22,18 +22,17 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="关联家庭" min-width="180">
+      <el-table-column label="关联家庭" min-width="220">
         <template #default="{ row }">
           <template v-if="roleFamilyMap[row.id]">
             <el-tag
               v-for="rf in roleFamilyMap[row.id]"
               :key="rf.family_id"
               size="small"
-              :type="rf.is_primary ? '' : 'info'"
+              type="info"
               style="margin-right: 4px"
             >
               {{ rf.family_name || `家庭#${rf.family_id}` }}
-              {{ rf.is_primary ? '(主)' : '' }}
             </el-tag>
           </template>
           <span v-else style="color: var(--color-text-secondary)">未关联</span>
@@ -53,8 +52,8 @@
         <el-form-item label="角色名称" prop="name">
           <el-input v-model="form.name" placeholder="如 本人、配偶" maxlength="20" />
         </el-form-item>
-        <el-form-item label="主要家庭" prop="family_id">
-          <el-select v-model="form.family_id" placeholder="选择家庭">
+        <el-form-item label="关联家庭">
+          <el-select v-model="form.family_ids" placeholder="选择家庭" clearable multiple collapse-tags collapse-tags-tooltip>
             <el-option v-for="f in systemStore.families" :key="f.id" :label="f.name" :value="f.id" />
           </el-select>
         </el-form-item>
@@ -78,21 +77,12 @@
         </div>
         <el-table :data="currentRoleFamilies" size="small" empty-text="暂无关联家庭">
           <el-table-column prop="family_name" label="家庭名称" min-width="120" />
-          <el-table-column label="主要" width="80">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.is_primary ? 'success' : 'info'">
-                {{ row.is_primary ? '是' : '否' }}
-              </el-tag>
-            </template>
-          </el-table-column>
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
               <el-button
-                v-if="!row.is_primary"
                 link type="danger" size="small"
                 @click="handleRemoveFamily(row)"
               >移除</el-button>
-              <span v-else style="color: var(--color-text-secondary); font-size: 12px">不可移除</span>
             </template>
           </el-table-column>
         </el-table>
@@ -138,7 +128,7 @@ const addFamilyId = ref(null)
 
 const form = reactive({
   name: '',
-  family_id: null,
+  family_ids: [],
   role_type: 'personal',
 })
 
@@ -146,9 +136,6 @@ const rules = {
   name: [
     { required: true, message: '请输入角色名称', trigger: 'blur' },
     { max: 20, message: '名称不超过20字', trigger: 'blur' },
-  ],
-  family_id: [
-    { required: true, message: '请选择所属家庭', trigger: 'change' },
   ],
 }
 
@@ -187,13 +174,12 @@ function openDialog(row) {
     editingId.value = row.id
     form.name = row.name
     const families = roleFamilyMap.value[row.id] || []
-    const primary = families.find(rf => rf.is_primary)
-    form.family_id = primary ? primary.family_id : null
+    form.family_ids = families.map(rf => rf.family_id)
     form.role_type = row.role_type || 'personal'
   } else {
     editingId.value = null
     form.name = ''
-    form.family_id = null
+    form.family_ids = []
     form.role_type = 'personal'
   }
   dialogVisible.value = true
@@ -256,31 +242,42 @@ async function handleSave() {
         name: form.name,
         role_type: form.role_type,
       })
-      if (form.family_id) {
-        const existingFamilies = await systemStore.getRoleFamilies(editingId.value)
-        const primary = existingFamilies.find(rf => rf.is_primary)
-        if (!primary || primary.family_id !== form.family_id) {
-          if (primary) {
-            await systemStore.removeRoleFamily(editingId.value, primary.family_id)
-          }
-          await systemStore.addRoleFamily(editingId.value, form.family_id, 1)
-        }
-        const linkedIds = existingFamilies.map(rf => rf.family_id)
-        if (!linkedIds.includes(form.family_id)) {
-          await systemStore.addRoleFamily(editingId.value, form.family_id, 1)
+
+      const existingFamilies = await systemStore.getRoleFamilies(editingId.value)
+      const existingIds = existingFamilies.map(rf => rf.family_id)
+      const targetIds = form.family_ids
+
+      for (const familyId of targetIds) {
+        if (!existingIds.includes(familyId)) {
+          await systemStore.addRoleFamily(editingId.value, familyId)
         }
       }
+
+      for (const familyId of existingIds) {
+        if (!targetIds.includes(familyId)) {
+          await systemStore.removeRoleFamily(editingId.value, familyId)
+        }
+      }
+
       ElMessage.success('角色已更新')
     } else {
-      await systemStore.createRole({
+      const result = await systemStore.createRole({
         name: form.name,
-        family_id: form.family_id,
+        family_id: form.family_ids[0] ?? null,
         role_type: form.role_type,
       })
+
+      const roleId = result?.role_id
+      if (roleId) {
+        for (const familyId of form.family_ids.slice(1)) {
+          await systemStore.addRoleFamily(roleId, familyId)
+        }
+      }
+
       ElMessage.success('角色已创建')
     }
     dialogVisible.value = false
-    await loadRoleFamilyMap()
+    await loadRoles()
   } catch (e) {
     ElMessage.error(e.message)
   } finally {

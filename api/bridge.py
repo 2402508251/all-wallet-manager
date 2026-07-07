@@ -84,14 +84,58 @@ class ApiBridge:
                 self.dal.insert('role_families', {
                     'role_id': role_id,
                     'family_id': family_id,
-                    'is_primary': 1,
                 })
 
         self._default_ids = {'role_id': role_id, 'family_id': family_id}
         return self._default_ids
 
-    def get_or_create_account(self, account_tag: str, account_name: str, channel: str) -> int:
-        cache_key = f"{account_tag}|{channel}"
+    def _resolve_canonical_account_id(self, account_id: int) -> int:
+        """沿 merged_into_account_id 解析到账户规范 ID。"""
+        if not account_id:
+            return account_id
+        seen = set()
+        current_id = account_id
+        while current_id and current_id not in seen:
+            seen.add(current_id)
+            row = self.dal.fetch_one(
+                "SELECT merged_into_account_id FROM accounts WHERE id = ?",
+                (current_id,),
+            )
+            if not row or not row.get('merged_into_account_id'):
+                return current_id
+            current_id = row['merged_into_account_id']
+        return account_id
+
+    def _add_wechat_alias(
+        self,
+        account_id: int,
+        alias_value: str,
+        alias_type: str = 'wechat_nickname',
+        source_kind: str = 'import',
+        source_account_id: int = None,
+        merge_session_id: str = None,
+    ) -> None:
+        alias_value = str(alias_value or '').strip()
+        if not account_id or not alias_value or alias_value == '未知用户':
+            return
+        try:
+            self.dal.insert_or_ignore('account_aliases', {
+                'account_id': account_id,
+                'channel': 'wechat',
+                'alias_type': alias_type,
+                'alias_value': alias_value,
+                'source_kind': source_kind,
+                'source_account_id': source_account_id,
+                'merge_session_id': merge_session_id,
+                'created_at': self._now(),
+            })
+        except Exception as e:
+            logger.warning("add_wechat_alias failed: account_id=%s alias=%s error=%s", account_id, alias_value, e)
+
+    def get_or_create_account(self, account_tag: str, account_name: str, channel: str, hints: dict = None) -> int:
+        hints = hints or {}
+        cache_alias = '|'.join(sorted(str(v).strip() for v in hints.get('alias_candidates', []) if str(v).strip()))
+        cache_key = f"{account_tag}|{channel}|{cache_alias}"
         if cache_key in self._account_cache:
             return self._account_cache[cache_key]
 
@@ -100,8 +144,29 @@ class ApiBridge:
             (account_tag, channel),
         )
         if account:
-            self._account_cache[cache_key] = account['id']
-            return account['id']
+            account_id = self._resolve_canonical_account_id(account['id'])
+            if channel == 'wechat':
+                for alias in hints.get('alias_candidates', []):
+                    self._add_wechat_alias(account_id, alias)
+            self._account_cache[cache_key] = account_id
+            return account_id
+
+        if channel == 'wechat':
+            for alias in hints.get('alias_candidates', []):
+                alias_value = str(alias or '').strip()
+                if not alias_value:
+                    continue
+                alias_row = self.dal.fetch_one(
+                    "SELECT account_id FROM account_aliases "
+                    "WHERE channel = 'wechat' AND alias_value = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (alias_value,),
+                )
+                if alias_row:
+                    account_id = self._resolve_canonical_account_id(alias_row['account_id'])
+                    self._add_wechat_alias(account_id, alias_value)
+                    self._account_cache[cache_key] = account_id
+                    return account_id
 
         # 确保默认角色存在，新账户自动关联
         defaults = self.ensure_default_family_and_role()
@@ -113,6 +178,10 @@ class ApiBridge:
             'channel': channel,
             'role_id': default_role_id,
         })
+
+        if channel == 'wechat':
+            for alias in hints.get('alias_candidates', []):
+                self._add_wechat_alias(account_id, alias)
 
         self._account_cache[cache_key] = account_id
         return account_id
@@ -198,7 +267,7 @@ class ApiBridge:
             payment_method_to_account = {}
             for acc in account_info.get('accounts', []):
                 account_id = self.get_or_create_account(
-                    acc['tag'], acc['name'], channel
+                    acc['tag'], acc['name'], channel, acc
                 )
                 payment_method_to_account[acc['payment_method']] = account_id
 
@@ -229,20 +298,12 @@ class ApiBridge:
                         account_id = payment_method_to_account['_default_']
 
                     role_id = None
-                    family_id = None
                     if account_id:
                         account = self.dal.fetch_one(
                             "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                         )
                         if account and account['role_id']:
                             role_id = account['role_id']
-                            primary_family = self.dal.fetch_one(
-                                "SELECT family_id FROM role_families "
-                                "WHERE role_id = ? AND is_primary = 1",
-                                (role_id,),
-                            )
-                            if primary_family:
-                                family_id = primary_family['family_id']
 
                     assign_status = 'assigned' if (account_id and role_id) else 'pending'
 
@@ -260,7 +321,6 @@ class ApiBridge:
                         'remark': rec.get('remark', ''),
                         'account_id': account_id,
                         'role_id': role_id,
-                        'family_id': family_id,
                         'assign_status': assign_status,
                         'is_system': 0,
                         'batch_id': batch_id,
@@ -461,7 +521,9 @@ class ApiBridge:
                 conditions.append("ub.trade_time <= ?")
                 sql_params.append(filters['end_time'])
             if filters.get('family_id'):
-                conditions.append("ub.family_id = ?")
+                conditions.append(
+                    "EXISTS (SELECT 1 FROM role_families rf WHERE rf.role_id = ub.role_id AND rf.family_id = ?)"
+                )
                 sql_params.append(filters['family_id'])
             if filters.get('role_id'):
                 conditions.append("ub.role_id = ?")
@@ -549,7 +611,7 @@ class ApiBridge:
         allowed = {
             'counterparty', 'product_desc', 'payment_method', 'remark',
             'trade_type', 'direction', 'category_id', 'assign_status',
-            'account_id', 'role_id', 'family_id',
+            'account_id', 'role_id',
         }
         data = {k: v for k, v in fields.items() if k in allowed}
         if not data:
@@ -707,7 +769,7 @@ class ApiBridge:
         else:
             end = f"{year}-{month + 1:02d}-01T00:00:00+08:00"
 
-        base_query = "FROM unified_bills ub LEFT JOIN role_families rf ON ub.role_id = rf.role_id AND rf.is_primary = 1"
+        base_query = "FROM unified_bills ub LEFT JOIN role_families rf ON ub.role_id = rf.role_id"
         conditions = ["ub.is_deleted = 0", "ub.trade_time >= ?", "ub.trade_time < ?"]
         sql_params = [start, end]
 
@@ -776,7 +838,7 @@ class ApiBridge:
             f"SELECT bc.name as category_name, bc.icon, "
             f"SUM(ub.amount_cents) as total_amount, COUNT(*) as count "
             f"FROM unified_bills ub "
-            f"LEFT JOIN role_families rf ON ub.role_id = rf.role_id AND rf.is_primary = 1 "
+            f"LEFT JOIN role_families rf ON ub.role_id = rf.role_id "
             f"LEFT JOIN bill_categories bc ON ub.category_id = bc.id "
             f"WHERE {where} "
             f"GROUP BY ub.category_id ORDER BY total_amount DESC",
@@ -883,7 +945,7 @@ class ApiBridge:
                 })
                 if family_id:
                     self.dal.insert('role_families', {
-                        'role_id': rid, 'family_id': family_id, 'is_primary': 1,
+                        'role_id': rid, 'family_id': family_id,
                     })
             return self.ok({'role_id': rid})
         except Exception as e:
@@ -909,12 +971,251 @@ class ApiBridge:
 
     def get_accounts(self, params=None) -> dict:
         role_id = (params or {}).get('role_id')
+        base_sql = (
+            "SELECT a.*, r.name AS role_name, "
+            "target.account_name AS canonical_account_name, "
+            "target.id AS canonical_account_id, "
+            "(SELECT COUNT(1) FROM account_aliases aa WHERE aa.account_id = a.id) AS alias_count "
+            "FROM accounts a "
+            "LEFT JOIN roles r ON a.role_id = r.id "
+            "LEFT JOIN accounts target ON a.merged_into_account_id = target.id"
+        )
         if role_id:
             rows = self.dal.fetch_all(
-                "SELECT * FROM accounts WHERE role_id = ?", (role_id,))
+                f"{base_sql} WHERE a.role_id = ? ORDER BY a.id DESC", (role_id,)
+            )
         else:
-            rows = self.dal.fetch_all("SELECT * FROM accounts")
+            rows = self.dal.fetch_all(f"{base_sql} ORDER BY a.id DESC")
         return self.ok({'list': [dict(r) for r in rows]})
+
+    def _sync_account_bills_role(self, account_id: int, role_id, snapshot_type='account_role_change') -> int:
+        bills = self.dal.fetch_all(
+            "SELECT id FROM unified_bills WHERE account_id = ? AND is_deleted = 0",
+            (account_id,),
+        )
+        bill_ids = [b['id'] for b in bills]
+        if not bill_ids:
+            return 0
+
+        snapshot_id = self.snapshot.create_snapshot(
+            snapshot_type,
+            f'账户{account_id}角色变更，级联更新{len(bill_ids)}条账单',
+            bill_ids,
+        )
+
+        new_assign_status = 'assigned' if role_id else 'pending'
+        placeholders = ', '.join(['?' for _ in bill_ids])
+        self.dal.execute(
+            f"UPDATE unified_bills SET role_id = ?, assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
+            (role_id, new_assign_status, self._now(), *bill_ids),
+        )
+        self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
+        return len(bill_ids)
+
+    def get_account_aliases(self, params=None) -> dict:
+        account_id = (params or {}).get('account_id')
+        account = self.dal.fetch_one("SELECT id, channel FROM accounts WHERE id = ?", (account_id,))
+        if not account:
+            return self.err('账户不存在')
+        if account['channel'] != 'wechat':
+            return self.ok({'list': []})
+        rows = self.dal.fetch_all(
+            "SELECT * FROM account_aliases WHERE account_id = ? ORDER BY id DESC",
+            (account_id,),
+        )
+        return self.ok({'list': [dict(r) for r in rows]})
+
+    def create_account_alias(self, params=None) -> dict:
+        p = params or {}
+        account_id = p.get('account_id')
+        alias_value = str(p.get('alias_value', '')).strip()
+        alias_type = p.get('alias_type', 'wechat_nickname')
+        account = self.dal.fetch_one("SELECT id, channel FROM accounts WHERE id = ?", (account_id,))
+        if not account:
+            return self.err('账户不存在')
+        if account['channel'] != 'wechat':
+            return self.err('当前仅支持维护微信账户曾用名')
+        if not alias_value:
+            return self.err('请输入曾用名')
+        try:
+            self.dal.insert_or_ignore('account_aliases', {
+                'account_id': account_id,
+                'channel': 'wechat',
+                'alias_type': alias_type,
+                'alias_value': alias_value,
+                'source_kind': 'manual',
+                'created_at': self._now(),
+            })
+            return self.ok()
+        except Exception as e:
+            return self.err(f'保存曾用名失败: {e}')
+
+    def delete_account_alias(self, params=None) -> dict:
+        alias_id = (params or {}).get('alias_id')
+        deleted = self.dal.delete('account_aliases', 'id = ?', (alias_id,))
+        return self.ok() if deleted else self.err('曾用名不存在')
+
+    def merge_wechat_accounts(self, params=None) -> dict:
+        p = params or {}
+        source_id = p.get('source_account_id')
+        target_id = p.get('target_account_id')
+        if not source_id or not target_id or source_id == target_id:
+            return self.err('请选择不同的源账户和目标账户')
+
+        source = self.dal.fetch_one("SELECT * FROM accounts WHERE id = ?", (source_id,))
+        target = self.dal.fetch_one("SELECT * FROM accounts WHERE id = ?", (target_id,))
+        if not source or not target:
+            return self.err('账户不存在')
+        if source['channel'] != 'wechat' or target['channel'] != 'wechat':
+            return self.err('当前仅支持合并微信账户')
+
+        canonical_target_id = self._resolve_canonical_account_id(target_id)
+        if canonical_target_id == source_id:
+            return self.err('不能合并到自身或其下级账户')
+
+        try:
+            merge_session_id = str(uuid.uuid4())
+            with self.dal.transaction():
+                self.dal.update(
+                    'accounts',
+                    {'merged_into_account_id': canonical_target_id},
+                    'id = ?',
+                    (source_id,),
+                )
+                # 把源账户展示名中可识别的微信昵称沉淀为目标账户别名，减少后续导入裂变。
+                self._add_wechat_alias(
+                    canonical_target_id,
+                    source['account_name'].replace('微信-', '').split('-')[0],
+                    source_kind='merge_auto_added',
+                    source_account_id=source_id,
+                    merge_session_id=merge_session_id,
+                )
+            self._account_cache.clear()
+            return self.ok({
+                'source_account_id': source_id,
+                'target_account_id': canonical_target_id,
+                'merge_session_id': merge_session_id,
+            })
+        except Exception as e:
+            return self.err(f'合并微信账户失败: {e}')
+
+    def _retrace_related_real_payer_bills(self, account_ids: list[int]) -> dict:
+        """局部重跑与指定账户相关的真实支付者溯源。"""
+        account_ids = [aid for aid in account_ids if aid]
+        if not account_ids:
+            return {'groups_undone': 0, 'bills_retraced': 0, 'merged_count': 0}
+
+        placeholders = ', '.join(['?' for _ in account_ids])
+        affected_rows = self.dal.fetch_all(
+            f"SELECT ub.id, ub.channel, ba.merged_group_id "
+            f"FROM unified_bills ub "
+            f"LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            f"WHERE ub.is_deleted = 0 AND (ub.account_id IN ({placeholders}) "
+            f"OR ba.real_payer_account_id IN ({placeholders}))",
+            tuple(account_ids) + tuple(account_ids),
+        )
+        group_ids = sorted({r['merged_group_id'] for r in affected_rows if r.get('merged_group_id')})
+        bill_ids = {r['id'] for r in affected_rows}
+
+        from modules.accounting.cross_platform_merger import CrossPlatformMerger
+        merger = CrossPlatformMerger(self.dal)
+
+        for group_id in group_ids:
+            members = merger.get_merged_group(group_id)
+            bill_ids.update(m['id'] for m in members)
+            merger.undo_merge(group_id)
+
+        orphan_rows = self.dal.fetch_all(
+            f"SELECT ub.id FROM unified_bills ub "
+            f"JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            f"WHERE ub.is_deleted = 0 AND ba.merge_status = 'orphan' "
+            f"AND ub.account_id IN ({placeholders})",
+            tuple(account_ids),
+        )
+        bill_ids.update(r['id'] for r in orphan_rows)
+
+        bills = self.dal.fetch_all(
+            f"SELECT * FROM unified_bills WHERE id IN ({', '.join(['?' for _ in bill_ids])}) AND is_deleted = 0 "
+            f"ORDER BY trade_time ASC" if bill_ids else "SELECT * FROM unified_bills WHERE 1 = 0",
+            tuple(bill_ids),
+        )
+
+        merged_count = 0
+        retraced_count = 0
+        for bill in bills:
+            bill_dict = dict(bill)
+            result = None
+            if bill['channel'] in ('wechat', 'alipay'):
+                result = merger.mark_orphan(bill_dict)
+                retraced_count += 1
+            elif bill['channel'] == 'ccb':
+                result = merger.try_merge(bill_dict)
+                retraced_count += 1
+            if result and result.get('merged'):
+                merged_count += 1
+
+        return {
+            'groups_undone': len(group_ids),
+            'bills_retraced': retraced_count,
+            'merged_count': merged_count,
+        }
+
+    def unmerge_wechat_account(self, params=None) -> dict:
+        p = params or {}
+        account_id = p.get('account_id')
+        remove_auto_added_target_aliases = bool(p.get('remove_auto_added_target_aliases', False))
+        return_source_aliases = bool(p.get('return_source_aliases', False))
+        retrace_related_bills = bool(p.get('retrace_related_bills', False))
+
+        account = self.dal.fetch_one("SELECT id, channel, merged_into_account_id FROM accounts WHERE id = ?", (account_id,))
+        if not account:
+            return self.err('账户不存在')
+        if account['channel'] != 'wechat':
+            return self.err('当前仅支持微信账户取消合并')
+
+        target_id = account.get('merged_into_account_id')
+        result = {
+            'detached': False,
+            'removed_alias_count': 0,
+            'returned_alias_count': 0,
+            'retrace': None,
+        }
+
+        try:
+            with self.dal.transaction():
+                self.dal.update('accounts', {'merged_into_account_id': None}, 'id = ?', (account_id,))
+                result['detached'] = True
+
+                if remove_auto_added_target_aliases and target_id:
+                    result['removed_alias_count'] = self.dal.delete(
+                        'account_aliases',
+                        "account_id = ? AND source_account_id = ? AND source_kind = ?",
+                        (target_id, account_id, 'merge_auto_added'),
+                    )
+
+                if return_source_aliases and target_id:
+                    result['returned_alias_count'] = self.dal.update(
+                        'account_aliases',
+                        {
+                            'account_id': account_id,
+                            'source_kind': 'manual',
+                            'source_account_id': None,
+                            'merge_session_id': None,
+                        },
+                        "account_id = ? AND source_account_id = ? AND source_kind = ?",
+                        (target_id, account_id, 'merge_reassigned'),
+                    )
+
+            if retrace_related_bills:
+                related_ids = [account_id]
+                if target_id:
+                    related_ids.append(target_id)
+                result['retrace'] = self._retrace_related_real_payer_bills(related_ids)
+
+            self._account_cache.clear()
+            return self.ok(result)
+        except Exception as e:
+            return self.err(f'取消合并失败: {e}')
 
     def create_account(self, params=None) -> dict:
         p = params or {}
@@ -943,54 +1244,62 @@ class ApiBridge:
                         "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                     )
                     if old_account and old_account['role_id'] != data['role_id']:
-                        new_role_id = data['role_id']
-                        new_family_id = None
-                        if new_role_id:
-                            primary_family = self.dal.fetch_one(
-                                "SELECT family_id FROM role_families "
-                                "WHERE role_id = ? AND is_primary = 1",
-                                (new_role_id,),
-                            )
-                            if primary_family:
-                                new_family_id = primary_family['family_id']
-
-                        bills = self.dal.fetch_all(
-                            "SELECT id FROM unified_bills WHERE account_id = ? AND is_deleted = 0",
-                            (account_id,),
-                        )
-                        bill_ids = [b['id'] for b in bills]
-                        if bill_ids:
-                            self.snapshot.create_snapshot(
-                                'account_role_change',
-                                f'账户{account_id}角色变更，级联更新{len(bill_ids)}条账单',
-                                bill_ids,
-                            )
-
-                            new_assign_status = 'assigned' if new_role_id else 'pending'
-                            placeholders = ', '.join(['?' for _ in bill_ids])
-                            self.dal.execute(
-                                f"UPDATE unified_bills SET role_id = ?, family_id = ?, "
-                                f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
-                                (new_role_id, new_family_id, new_assign_status,
-                                 self._now(), *bill_ids),
-                            )
-
-                            self.snapshot.finalize_snapshot(
-                                self.dal.fetch_one(
-                                    "SELECT id FROM snapshots ORDER BY id DESC LIMIT 1"
-                                )['id'],
-                                bill_ids,
-                            )
+                        self._sync_account_bills_role(account_id, data['role_id'])
 
                 self.dal.update('accounts', data, 'id = ?', (account_id,))
             return self.ok()
         except Exception as e:
             return self.err(f'更新账户失败: {e}')
 
+    def batch_assign_account_role(self, params=None) -> dict:
+        p = params or {}
+        account_ids = p.get('account_ids', [])
+        role_id = p.get('role_id')
+        if not account_ids:
+            return self.err('未选择账户')
+        if not role_id:
+            return self.err('未选择目标角色')
+
+        role = self.dal.fetch_one("SELECT id FROM roles WHERE id = ?", (role_id,))
+        if not role:
+            return self.err('目标角色不存在')
+
+        placeholders = ', '.join(['?' for _ in account_ids])
+        rows = self.dal.fetch_all(
+            f"SELECT id, role_id FROM accounts WHERE id IN ({placeholders})",
+            tuple(account_ids),
+        )
+        if len(rows) != len(account_ids):
+            return self.err('部分账户不存在')
+
+        updated_ids = []
+        try:
+            with self.dal.transaction():
+                for row in rows:
+                    account_id = row['id']
+                    if row['role_id'] == role_id:
+                        continue
+                    self._sync_account_bills_role(account_id, role_id, 'batch_account_role_change')
+                    self.dal.update('accounts', {'role_id': role_id}, 'id = ?', (account_id,))
+                    updated_ids.append(account_id)
+            return self.ok({'updated_count': len(updated_ids)})
+        except Exception as e:
+            return self.err(f'批量分配角色失败: {e}')
+
     def delete_account(self, params=None) -> dict:
         account_id = (params or {}).get('account_id')
-        self.dal.delete('accounts', 'id = ?', (account_id,))
-        return self.ok()
+        refs = [
+            self.dal.fetch_one("SELECT id FROM unified_bills WHERE account_id = ? LIMIT 1", (account_id,)),
+            self.dal.fetch_one("SELECT id FROM bill_accounting WHERE real_payer_account_id = ? LIMIT 1", (account_id,)),
+            self.dal.fetch_one("SELECT id FROM credit_accounts WHERE linked_account_id = ? LIMIT 1", (account_id,)),
+            self.dal.fetch_one("SELECT id FROM accounts WHERE merged_into_account_id = ? LIMIT 1", (account_id,)),
+        ]
+        if any(refs):
+            return self.err('账户已被账单、真实支付者或合并关系引用，不能直接删除')
+        with self.dal.transaction():
+            self.dal.delete('account_aliases', 'account_id = ?', (account_id,))
+            deleted = self.dal.delete('accounts', 'id = ?', (account_id,))
+        return self.ok() if deleted else self.err('账户不存在')
 
     def get_categories(self, params=None) -> dict:
         rows = self.dal.fetch_all(
@@ -1433,16 +1742,6 @@ class ApiBridge:
                     return self.err('账户不存在')
 
                 new_role_id = account['role_id']
-                new_family_id = None
-                if new_role_id:
-                    primary_family = self.dal.fetch_one(
-                        "SELECT family_id FROM role_families "
-                        "WHERE role_id = ? AND is_primary = 1",
-                        (new_role_id,),
-                    )
-                    if primary_family:
-                        new_family_id = primary_family['family_id']
-
                 new_assign_status = 'assigned' if new_role_id else 'pending'
 
                 snapshot_id = self.snapshot.create_snapshot(
@@ -1453,9 +1752,9 @@ class ApiBridge:
 
                 placeholders = ', '.join(['?' for _ in bill_ids])
                 self.dal.execute(
-                    f"UPDATE unified_bills SET account_id = ?, role_id = ?, family_id = ?, "
+                    f"UPDATE unified_bills SET account_id = ?, role_id = ?, "
                     f"assign_status = ?, updated_at = ? WHERE id IN ({placeholders})",
-                    (account_id, new_role_id, new_family_id, new_assign_status,
+                    (account_id, new_role_id, new_assign_status,
                      self._now(), *bill_ids),
                 )
 
@@ -1469,43 +1768,7 @@ class ApiBridge:
             return self.err(f'批量重分配失败: {e}')
 
     def reassign_bill_family(self, params=None) -> dict:
-        p = params or {}
-        bill_id = p.get('bill_id')
-        family_id = p.get('family_id')
-        try:
-            with self.dal.transaction():
-                bill = self.dal.fetch_one(
-                    "SELECT role_id FROM unified_bills WHERE id = ?", (bill_id,)
-                )
-                if not bill:
-                    return self.err('账单不存在')
-                if not bill['role_id']:
-                    return self.err('账单未分配角色，无法变更家庭')
-
-                rf = self.dal.fetch_one(
-                    "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
-                    (bill['role_id'], family_id),
-                )
-                if not rf:
-                    return self.err('目标家庭不是该角色关联的家庭')
-
-                snapshot_id = self.snapshot.create_snapshot(
-                    'reassign_family',
-                    f'变更账单{bill_id}的归属家庭为{family_id}',
-                    [bill_id],
-                )
-
-                self.dal.update(
-                    'unified_bills',
-                    {'family_id': family_id, 'updated_at': self._now()},
-                    'id = ?',
-                    (bill_id,),
-                )
-
-                self.snapshot.finalize_snapshot(snapshot_id, [bill_id])
-            return self.ok()
-        except Exception as e:
-            return self.err(f'变更账单家庭失败: {e}')
+        return self.err('账单归属家庭功能已下线，请改为调整角色归属')
 
     def rollback_batch(self, params=None) -> dict:
         batch_id = (params or {}).get('batch_id')
@@ -1559,35 +1822,12 @@ class ApiBridge:
         p = params or {}
         role_id = p.get('role_id')
         family_id = p.get('family_id')
-        is_primary = p.get('is_primary', 0)
         try:
             with self.dal.transaction():
                 self.dal.insert_or_ignore('role_families', {
                     'role_id': role_id,
                     'family_id': family_id,
-                    'is_primary': is_primary,
                 })
-
-                if is_primary == 1:
-                    bills = self.dal.fetch_all(
-                        "SELECT id FROM unified_bills WHERE role_id = ? AND is_deleted = 0",
-                        (role_id,),
-                    )
-                    bill_ids = [b['id'] for b in bills]
-                    if bill_ids:
-                        snapshot_id = self.snapshot.create_snapshot(
-                            'role_family_change',
-                            f'角色{role_id}主要家庭变更，级联更新{len(bill_ids)}条账单',
-                            bill_ids,
-                        )
-                        placeholders = ', '.join(['?' for _ in bill_ids])
-                        self.dal.execute(
-                            f"UPDATE unified_bills SET family_id = ?, updated_at = ? "
-                            f"WHERE id IN ({placeholders})",
-                            (family_id, self._now(), *bill_ids),
-                        )
-                        self.snapshot.finalize_snapshot(snapshot_id, bill_ids)
-
             return self.ok()
         except Exception as e:
             return self.err(f'添加角色-家庭关联失败: {e}')
@@ -1597,14 +1837,11 @@ class ApiBridge:
         role_id = p.get('role_id')
         family_id = p.get('family_id')
         rf = self.dal.fetch_one(
-            "SELECT is_primary FROM role_families "
-            "WHERE role_id = ? AND family_id = ?",
+            "SELECT 1 FROM role_families WHERE role_id = ? AND family_id = ?",
             (role_id, family_id),
         )
         if not rf:
             return self.err('关联不存在')
-        if rf['is_primary'] == 1:
-            return self.err('主要家庭不可移除，请先设置其他主要家庭')
 
         self.dal.delete(
             'role_families',

@@ -1,7 +1,7 @@
 <template>
   <div v-if="bill" class="accounting-info">
     <el-descriptions :column="1" border size="small">
-      <el-descriptions-item label="合并状态">
+      <el-descriptions-item label="溯源状态">
         <el-tag size="small" :type="mergeStatusType(mergeStatus)">
           {{ mergeStatusLabel(mergeStatus) }}
         </el-tag>
@@ -17,7 +17,7 @@
       <el-descriptions-item label="转账配对号">
         {{ bill.transfer_link_id || '未配对' }}
       </el-descriptions-item>
-      <el-descriptions-item v-if="bill.merged_group_id" label="合并组ID">
+      <el-descriptions-item v-if="bill.merged_group_id" label="溯源组ID">
         {{ bill.merged_group_id }}
       </el-descriptions-item>
       <el-descriptions-item label="分配状态">
@@ -46,9 +46,9 @@ const mergeStatus = computed(() => props.bill?.merge_status || 'normal')
 function mergeStatusLabel(status) {
   const map = {
     normal: '正常',
-    orphan: '待合并（孤立）',
-    merged_source: '已合并（发起方）',
-    merged_target: '已合并（真实支付者）',
+    orphan: '待溯源',
+    merged_source: '已溯源（发起方）',
+    merged_target: '已溯源（真实支付者）',
   }
   return map[status] || status
 }

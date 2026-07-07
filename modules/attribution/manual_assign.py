@@ -9,24 +9,13 @@ class ManualAssigner:
         self.dal = dal
 
     def batch_assign(self, bill_ids: list[int], role_id: int) -> int:
-        """批量分配角色，同时从 role_families 回填 family_id"""
+        """批量分配角色，仅更新 role_id 与分配状态"""
         if not bill_ids:
             return 0
 
-        family_id = None
-        if role_id:
-            primary_family = self.dal.fetch_one(
-                "SELECT family_id FROM role_families "
-                "WHERE role_id = ? AND is_primary = 1",
-                (role_id,),
-            )
-            if primary_family:
-                family_id = primary_family['family_id']
-
         data = {
             'role_id': role_id,
-            'family_id': family_id,
-            'assign_status': 'assigned',
+            'assign_status': 'assigned' if role_id else 'pending',
         }
 
         placeholders = ', '.join(['?' for _ in bill_ids])

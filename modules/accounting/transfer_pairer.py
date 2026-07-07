@@ -230,7 +230,6 @@ class TransferPairer:
             'batch_id': transfer_record.get('batch_id', ''),
             'account_id': transfer_record.get('account_id'),
             'role_id': transfer_record.get('role_id'),
-            'family_id': transfer_record.get('family_id'),
             'assign_status': 'assigned' if transfer_record.get('role_id') else 'pending',
         }
         return fee_record

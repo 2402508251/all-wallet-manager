@@ -1,6 +1,6 @@
 <template>
   <div>
-    <el-table :data="records" style="width: 100%" size="small" empty-text="暂无孤儿记录">
+    <el-table :data="records" style="width: 100%" size="small" empty-text="暂无待溯源记录">
       <el-table-column label="时间" width="140">
         <template #default="{ row }">
           {{ formatTime(row.trade_time) }}
@@ -21,7 +21,7 @@
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="success" size="small" @click="$emit('merge', row)">
-            尝试合并
+            尝试溯源
           </el-button>
           <el-button link type="primary" size="small" @click="$emit('confirm', row)">
             确认独立计入

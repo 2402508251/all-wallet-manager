@@ -27,18 +27,11 @@
       <el-descriptions-item label="所属账户">
         {{ accountName }}
       </el-descriptions-item>
+      <el-descriptions-item v-if="canonicalAccountName && canonicalAccountName !== accountName" label="规范账户">
+        {{ canonicalAccountName }}
+      </el-descriptions-item>
       <el-descriptions-item label="所属角色">
         {{ roleName }}
-      </el-descriptions-item>
-      <el-descriptions-item label="所属家庭">
-        <div style="display: flex; align-items: center; gap: 8px">
-          <span>{{ familyName }}</span>
-          <el-button
-            v-if="canReassignFamily"
-            link type="primary" size="small"
-            @click="showFamilyReassign = true"
-          >变更</el-button>
-        </div>
       </el-descriptions-item>
       <el-descriptions-item label="渠道交易单号">
         <span style="font-size:12px;word-break:break-all">{{ bill.channel_trade_no }}</span>
@@ -64,24 +57,6 @@
       </el-descriptions-item>
     </el-descriptions>
 
-    <el-dialog v-model="showFamilyReassign" title="变更归属家庭" width="400px" append-to-body>
-      <p style="margin-bottom: 12px; color: var(--color-text-secondary)">
-        此角色关联了多个家庭，可选择将此账单归属到哪个家庭。
-      </p>
-      <el-select v-model="targetFamilyId" placeholder="选择目标家庭" style="width: 100%">
-        <el-option
-          v-for="rf in roleFamilies"
-          :key="rf.family_id"
-          :label="rf.family_name || `家庭#${rf.family_id}`"
-          :value="rf.family_id"
-        />
-      </el-select>
-      <template #footer>
-        <el-button @click="showFamilyReassign = false">取消</el-button>
-        <el-button type="primary" :disabled="!targetFamilyId" @click="handleReassignFamily">确认变更</el-button>
-      </template>
-    </el-dialog>
-
     <div class="bill-actions">
       <el-button type="danger" size="small" @click="handleDelete">
         <el-icon><Delete /></el-icon>
@@ -92,11 +67,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { computed } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
-import { useBillStore } from '@/stores/bill'
 
 const props = defineProps({
   bill: { type: Object, default: null },
@@ -105,12 +79,8 @@ const props = defineProps({
 const emit = defineEmits(['update', 'delete'])
 
 const systemStore = useSystemStore()
-const billStore = useBillStore()
 
 const categories = computed(() => systemStore.categories)
-const showFamilyReassign = ref(false)
-const targetFamilyId = ref(null)
-const roleFamilies = ref([])
 
 const accountName = computed(() => {
   if (!props.bill?.account_id) return '-'
@@ -118,33 +88,18 @@ const accountName = computed(() => {
   return acc?.account_name || props.bill.account_id
 })
 
+const canonicalAccountName = computed(() => {
+  if (!props.bill?.account_id) return ''
+  const acc = systemStore.accounts.find(a => a.id === props.bill.account_id)
+  if (!acc?.merged_into_account_id) return ''
+  return acc.canonical_account_name || acc.merged_into_account_id
+})
+
 const roleName = computed(() => {
   if (!props.bill?.role_id) return '-'
   const role = systemStore.roles.find(r => r.id === props.bill.role_id)
   return role?.name || `角色#${props.bill.role_id}`
 })
-
-const familyName = computed(() => {
-  if (!props.bill?.family_id) return '-'
-  const family = systemStore.families.find(f => f.id === props.bill.family_id)
-  return family?.name || `家庭#${props.bill.family_id}`
-})
-
-const canReassignFamily = computed(() => {
-  return props.bill?.role_id && roleFamilies.value.length > 1
-})
-
-watch(() => props.bill?.role_id, async (roleId) => {
-  if (roleId) {
-    try {
-      roleFamilies.value = await systemStore.getRoleFamilies(roleId)
-    } catch {
-      roleFamilies.value = []
-    }
-  } else {
-    roleFamilies.value = []
-  }
-}, { immediate: true })
 
 function tradeTypeLabel(type) {
   const map = {
@@ -183,17 +138,6 @@ function formatTime(timeStr) {
 function handleCategoryChange(categoryId) {
   emit('update', { category_id: categoryId })
   ElMessage.success('分类已更新')
-}
-
-async function handleReassignFamily() {
-  if (!targetFamilyId.value) return
-  try {
-    await billStore.reassignBillFamily(props.bill.id, targetFamilyId.value)
-    ElMessage.success('家庭已变更')
-    showFamilyReassign.value = false
-  } catch (e) {
-    ElMessage.error(e.message)
-  }
 }
 
 function handleDelete() {

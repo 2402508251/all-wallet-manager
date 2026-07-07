@@ -10,6 +10,7 @@
 2. 微信亲属卡支付（代付者账户记录 + 被代付者账户记录）
 """
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -60,6 +61,80 @@ class CrossPlatformMerger:
             return False
         return any(kw in payment_method for kw in keywords)
 
+    def extract_card_suffix(self, text: str) -> str:
+        """从支付方式、账户标识或账户名中提取 4 位银行卡尾号。"""
+        text = str(text or '')
+        match = re.search(r'\((\d{4})\)', text)
+        if match:
+            return match.group(1)
+        match = re.search(r'(?:_|-|（)(\d{4})(?:\)|）)?$', text)
+        if match:
+            return match.group(1)
+        digits = re.findall(r'\d{4}', text)
+        return digits[-1] if digits else ''
+
+    def extract_family_card_name(self, text: str) -> str:
+        """从亲属卡相关文本中尽量提取代付者/持卡人昵称。"""
+        text = str(text or '').strip()
+        if '亲属卡' not in text:
+            return ''
+        patterns = (
+            r'([^\s（）()，,：:]+)的亲属卡',
+            r'亲属卡[（(]([^）)]+)[）)]',
+            r'亲属卡[：:]\s*([^\s，,]+)',
+            r'亲属卡-([^\s，,]+)',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                name = match.group(1).strip()
+                if name and name not in ('亲属卡', '支付'):
+                    return name
+        return ''
+
+    def resolve_alias_account_id(self, alias_value: str) -> int | None:
+        alias_value = str(alias_value or '').strip()
+        if not alias_value:
+            return None
+        row = self.dal.fetch_one(
+            "SELECT aa.account_id, a.merged_into_account_id "
+            "FROM account_aliases aa "
+            "JOIN accounts a ON aa.account_id = a.id "
+            "WHERE aa.channel = 'wechat' AND aa.alias_value = ? "
+            "ORDER BY aa.id DESC LIMIT 1",
+            (alias_value,),
+        )
+        if not row:
+            return None
+        return row.get('merged_into_account_id') or row.get('account_id')
+
+    def resolve_canonical_account_id(self, account_id: int) -> int | None:
+        if not account_id:
+            return None
+        seen = set()
+        current_id = account_id
+        while current_id and current_id not in seen:
+            seen.add(current_id)
+            row = self.dal.fetch_one(
+                "SELECT merged_into_account_id FROM accounts WHERE id = ?",
+                (current_id,),
+            )
+            if not row or not row.get('merged_into_account_id'):
+                return current_id
+            current_id = row['merged_into_account_id']
+        return account_id
+
+    def get_account_card_suffix(self, account_id: int) -> str:
+        if not account_id:
+            return ''
+        row = self.dal.fetch_one(
+            "SELECT account_tag, account_name FROM accounts WHERE id = ?",
+            (account_id,),
+        )
+        if not row:
+            return ''
+        return self.extract_card_suffix(f"{row.get('account_tag', '')} {row.get('account_name', '')}")
+
     def scan_orphans(self) -> list[dict]:
         """
         扫描孤儿记录（发起方记录未找到真实支付者）：
@@ -96,7 +171,7 @@ class CrossPlatformMerger:
           * bill_accounting.merged_group_id = 同一UUID
           * bill_accounting.real_payer_account_id = 真实支付者账户ID
           * unified_bills.is_deleted = 0（不删除，保留记录）
-          * 保持原有的 role_id/family_id（角色层面：付款者消费）
+          * 保持原有的 role_id（角色层面：付款者消费）
         """
         amount = real_payer_record.get('amount_cents', 0)
         trade_time = real_payer_record.get('trade_time', '')
@@ -135,16 +210,36 @@ class CrossPlatformMerger:
                 (amount, real_payer_record.get('direction', 'expense')),
             )
 
-            # 找最佳匹配（时间差最小）
+            # 找最佳匹配：优先账户身份线索，其次时间差
             best_match = None
+            best_score = -1
             best_time_diff = float('inf')
+            real_payer_card_suffix = self.get_account_card_suffix(real_payer_account_id)
+            canonical_real_payer_account_id = self.resolve_canonical_account_id(real_payer_account_id)
 
             for orphan in orphans:
                 try:
                     t1 = datetime.fromisoformat(trade_time)
                     t2 = datetime.fromisoformat(orphan['trade_time'])
                     diff_hours = abs((t1 - t2).total_seconds()) / 3600
-                    if diff_hours <= threshold_hours and diff_hours < best_time_diff:
+                    if diff_hours > threshold_hours:
+                        continue
+
+                    score = 0
+                    orphan_payment_method = orphan.get('payment_method', '')
+                    orphan_card_suffix = self.extract_card_suffix(orphan_payment_method)
+                    if orphan_card_suffix and real_payer_card_suffix:
+                        if orphan_card_suffix != real_payer_card_suffix:
+                            continue
+                        score += 100
+
+                    family_name = self.extract_family_card_name(orphan_payment_method)
+                    alias_account_id = self.resolve_alias_account_id(family_name)
+                    if alias_account_id and alias_account_id == canonical_real_payer_account_id:
+                        score += 150
+
+                    if score > best_score or (score == best_score and diff_hours < best_time_diff):
+                        best_score = score
                         best_time_diff = diff_hours
                         best_match = orphan
                 except (ValueError, TypeError):
@@ -281,9 +376,13 @@ class CrossPlatformMerger:
             (amount, direction),
         )
 
-        # 检查是否包含第三方关键词
+        # 检查是否包含第三方关键词，并用账户身份线索增强排序
         best_match = None
+        best_score = -1
         best_time_diff = float('inf')
+        initiator_card_suffix = self.extract_card_suffix(payment_method)
+        family_name = self.extract_family_card_name(payment_method)
+        alias_account_id = self.resolve_alias_account_id(family_name)
 
         for target in potential_targets:
             search_text = f"{target.get('product_desc', '')} {target.get('remark', '')}"
@@ -302,7 +401,21 @@ class CrossPlatformMerger:
                     source_trade_time=trade_time,
                     target_trade_time=target['trade_time'],
                 )
-                if diff_hours <= threshold_hours and diff_hours < best_time_diff:
+                if diff_hours > threshold_hours:
+                    continue
+
+                score = 0
+                target_card_suffix = self.get_account_card_suffix(target.get('account_id'))
+                if initiator_card_suffix and target_card_suffix:
+                    if initiator_card_suffix != target_card_suffix:
+                        continue
+                    score += 100
+
+                if alias_account_id and alias_account_id == self.resolve_canonical_account_id(target.get('account_id')):
+                    score += 150
+
+                if score > best_score or (score == best_score and diff_hours < best_time_diff):
+                    best_score = score
                     best_time_diff = diff_hours
                     best_match = target
             except (ValueError, TypeError):

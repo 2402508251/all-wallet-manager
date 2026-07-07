@@ -57,15 +57,13 @@ const router = useRouter()
 onMounted(async () => {
   await Promise.all([
     systemStore.loadFamilies(),
+    systemStore.loadRoles(null),
     reportStore.loadAllReports(),
   ])
 })
 
 function handleFilterChange(filter) {
   reportStore.setFilter(filter)
-  if (filter.family_id !== undefined) {
-    systemStore.loadRoles(filter.family_id)
-  }
 }
 
 function handleToggleRepayment(hide) {

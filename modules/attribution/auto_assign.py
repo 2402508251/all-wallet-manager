@@ -18,33 +18,11 @@ class AutoAssigner:
             return records
 
         role_id = account['role_id']
-        family_id = None
-        if role_id:
-            primary_family = self.dal.fetch_one(
-                "SELECT family_id FROM role_families "
-                "WHERE role_id = ? AND is_primary = 1",
-                (role_id,),
-            )
-            if primary_family:
-                family_id = primary_family['family_id']
-
-        default_family = self.dal.fetch_one(
-            "SELECT * FROM families WHERE is_default = 1"
-        )
 
         for record in records:
             record['account_id'] = account_id
             record['role_id'] = role_id
-
-            if family_id:
-                record['family_id'] = family_id
-                record['assign_status'] = 'assigned'
-            elif default_family:
-                record['family_id'] = default_family['id']
-                record['assign_status'] = 'assigned'
-            else:
-                record['family_id'] = None
-                record['assign_status'] = 'pending'
+            record['assign_status'] = 'assigned' if role_id else 'pending'
 
         return records
 

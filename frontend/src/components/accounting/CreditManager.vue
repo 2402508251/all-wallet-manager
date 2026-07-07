@@ -10,7 +10,7 @@
 
     <div class="credit-records-header">
       <h4>信用消费记录 ({{ currentMonth }})</h4>
-      <el-select v-model="familyFilter" placeholder="家庭" clearable size="small" @change="loadRecords">
+      <el-select v-model="familyFilter" placeholder="家庭视角" clearable size="small" @change="loadRecords">
         <el-option v-for="f in families" :key="f.id" :label="f.name" :value="f.id" />
       </el-select>
     </div>

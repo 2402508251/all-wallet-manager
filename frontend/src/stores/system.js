@@ -47,8 +47,9 @@ export const useSystemStore = defineStore('system', {
     },
 
     async createRole(data) {
-      await call('create_role', data)
-      await this.loadRoles(data.family_id)
+      const result = await call('create_role', data)
+      await this.loadRoles(this.currentFamilyId)
+      return result
     },
 
     async updateRole(roleId, fields) {
@@ -70,8 +71,8 @@ export const useSystemStore = defineStore('system', {
       return data.list
     },
 
-    async addRoleFamily(roleId, familyId, isPrimary = 0) {
-      await call('add_role_family', { role_id: roleId, family_id: familyId, is_primary: isPrimary })
+    async addRoleFamily(roleId, familyId) {
+      await call('add_role_family', { role_id: roleId, family_id: familyId })
     },
 
     async removeRoleFamily(roleId, familyId) {
@@ -91,14 +92,50 @@ export const useSystemStore = defineStore('system', {
 
     async updateAccount(accountId, fields) {
       await call('update_account', { account_id: accountId, ...fields })
-      if (this.currentRoleId) {
-        await this.loadAccounts(this.currentRoleId)
-      }
+      await this.loadAccounts(this.currentRoleId)
+    },
+
+    async batchAssignAccountRole(accountIds, roleId) {
+      const data = await call('batch_assign_account_role', { account_ids: accountIds, role_id: roleId })
+      await this.loadAccounts(this.currentRoleId)
+      return data
     },
 
     async deleteAccount(accountId) {
       await call('delete_account', { account_id: accountId })
       await this.loadAccounts(this.currentRoleId)
+    },
+
+    async loadAccountAliases(accountId) {
+      const data = await call('get_account_aliases', { account_id: accountId })
+      return data.list || []
+    },
+
+    async createAccountAlias(accountId, aliasValue, aliasType = 'wechat_nickname') {
+      await call('create_account_alias', {
+        account_id: accountId,
+        alias_value: aliasValue,
+        alias_type: aliasType,
+      })
+    },
+
+    async deleteAccountAlias(aliasId) {
+      await call('delete_account_alias', { alias_id: aliasId })
+    },
+
+    async mergeWechatAccounts(sourceAccountId, targetAccountId) {
+      const data = await call('merge_wechat_accounts', {
+        source_account_id: sourceAccountId,
+        target_account_id: targetAccountId,
+      })
+      await this.loadAccounts(this.currentRoleId)
+      return data
+    },
+
+    async unmergeWechatAccount(accountId, options = {}) {
+      const data = await call('unmerge_wechat_account', { account_id: accountId, ...options })
+      await this.loadAccounts(this.currentRoleId)
+      return data
     },
 
     // ─── 分类 ────────────────────────────

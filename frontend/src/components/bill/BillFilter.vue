@@ -17,7 +17,7 @@
         value-format="YYYY-MM-DD"
       />
 
-      <el-select v-model="localFilter.family_id" placeholder="家庭" clearable size="default">
+      <el-select v-model="localFilter.family_id" placeholder="家庭视角" clearable size="default">
         <el-option
           v-for="f in families"
           :key="f.id"
@@ -67,11 +67,11 @@
         <el-option label="未分配" value="unassigned" />
       </el-select>
 
-      <el-select v-model="localFilter.merge_status" placeholder="合并状态" clearable size="default">
+      <el-select v-model="localFilter.merge_status" placeholder="溯源状态" clearable size="default">
         <el-option label="正常" value="normal" />
-        <el-option label="待合并（孤儿）" value="orphan" />
-        <el-option label="已合并（发起方）" value="merged_source" />
-        <el-option label="已合并（真实支付者）" value="merged_target" />
+        <el-option label="待溯源" value="orphan" />
+        <el-option label="已溯源（发起方）" value="merged_source" />
+        <el-option label="已溯源（真实支付者）" value="merged_target" />
       </el-select>
 
       <el-input
@@ -91,7 +91,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
@@ -114,39 +114,30 @@ const localFilter = reactive({
 })
 
 const dateRange = ref(null)
-
 const families = ref([])
 const roles = ref([])
 const categories = ref([])
 
 onMounted(async () => {
-  await systemStore.loadFamilies()
-  await systemStore.loadCategories()
+  await Promise.all([
+    systemStore.loadFamilies(),
+    systemStore.loadRoles(null),
+    systemStore.loadCategories(),
+  ])
   families.value = systemStore.families
+  roles.value = systemStore.roles
   categories.value = systemStore.categories
 })
 
-watch(() => localFilter.family_id, async (val) => {
-  if (val) {
-    await systemStore.loadRoles(val)
-    roles.value = systemStore.roles
-    localFilter.role_id = null
-  } else {
-    roles.value = []
-  }
-})
-
-watch(dateRange, (val) => {
-  if (val && val.length === 2) {
-    localFilter.start_time = val[0] + 'T00:00:00+08:00'
-    localFilter.end_time = val[1] + 'T23:59:59+08:00'
+function handleSearch() {
+  if (dateRange.value && dateRange.value.length === 2) {
+    localFilter.start_time = dateRange.value[0] + 'T00:00:00+08:00'
+    localFilter.end_time = dateRange.value[1] + 'T23:59:59+08:00'
   } else {
     localFilter.start_time = null
     localFilter.end_time = null
   }
-})
 
-function handleSearch() {
   const filter = {}
   for (const [k, v] of Object.entries(localFilter)) {
     if (v !== null && v !== '' && v !== undefined) {
