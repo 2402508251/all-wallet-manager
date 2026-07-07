@@ -15,7 +15,9 @@ class SnapshotEngine:
             'channel', 'trade_time', 'trade_type', 'direction', 'amount_cents',
             'counterparty', 'product_desc', 'payment_method', 'status',
             'channel_trade_no', 'remark', 'account_id',
-            'role_id', 'category_id', 'assign_status', 'is_deleted', 'is_system',
+            'role_id', 'category_id', 'category_source', 'category_score',
+            'category_rule_id', 'is_category_manual_edited',
+            'assign_status', 'is_deleted', 'is_system',
         ],
         'bill_accounting': [
             'transfer_link_id', 'is_credit', 'credit_account_id',

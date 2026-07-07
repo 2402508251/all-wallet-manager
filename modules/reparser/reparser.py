@@ -75,6 +75,9 @@ class ReParser:
                     direction_raw=mapped.get('direction_raw'),
                     channel=channel,
                 )
+                new_remark = bill['remark']
+                if channel == 'ccb':
+                    new_remark = str(raw_data.get('摘要', '') or '').strip()
 
                 changes = {}
                 old_values = {}
@@ -90,6 +93,10 @@ class ReParser:
                 if bill['amount_cents'] != amount_result['amount_cents']:
                     old_values['amount_cents'] = bill['amount_cents']
                     changes['amount_cents'] = amount_result['amount_cents']
+
+                if bill.get('remark', '') != new_remark:
+                    old_values['remark'] = bill.get('remark', '')
+                    changes['remark'] = new_remark
 
                 if changes:
                     now = self._now()

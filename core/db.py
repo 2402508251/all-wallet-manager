@@ -10,7 +10,7 @@ import uuid
 
 
 class DatabaseManager:
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -21,18 +21,25 @@ class DatabaseManager:
         conn = self._get_or_create_conn()
         conn.execute("PRAGMA journal_mode = WAL")
 
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
-        )
-        if cursor.fetchone() is None:
-            self._create_tables()
-            self._set_version(self.SCHEMA_VERSION)
-            self._insert_default_data()
-        else:
-            current_version = self._get_version()
-            if current_version < self.SCHEMA_VERSION:
-                self._migrate(current_version, self.SCHEMA_VERSION)
-                self._ensure_schema_v4()
+        try:
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+            )
+            if cursor.fetchone() is None:
+                self._create_tables()
+                self._set_version(self.SCHEMA_VERSION)
+            else:
+                current_version = self._get_version()
+                if current_version < self.SCHEMA_VERSION:
+                    self._migrate(current_version, self.SCHEMA_VERSION)
+
+            self._ensure_schema_v4()
+            self._ensure_schema_v5()
+            self._ensure_default_seed_data(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     def _get_or_create_conn(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -155,6 +162,10 @@ class DatabaseManager:
             account_id INTEGER,
             role_id INTEGER,
             category_id INTEGER,
+            category_source TEXT NOT NULL DEFAULT 'auto',
+            category_score INTEGER NOT NULL DEFAULT 0,
+            category_rule_id INTEGER,
+            is_category_manual_edited INTEGER NOT NULL DEFAULT 0,
             assign_status TEXT NOT NULL DEFAULT 'pending',
             is_deleted INTEGER NOT NULL DEFAULT 0,
             is_system INTEGER NOT NULL DEFAULT 0,
@@ -216,8 +227,23 @@ class DatabaseManager:
             name TEXT NOT NULL UNIQUE,
             icon TEXT,
             parent_id INTEGER,
+            level INTEGER NOT NULL DEFAULT 1,
             sort_order INTEGER NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT 'user',
+            is_enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (parent_id) REFERENCES bill_categories(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS category_match_fields (
+            field_key TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            source_scope TEXT NOT NULL,
+            field_expr TEXT NOT NULL,
+            is_system INTEGER NOT NULL DEFAULT 1,
+            is_enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS category_keywords (
@@ -225,8 +251,15 @@ class DatabaseManager:
             category_id INTEGER NOT NULL,
             keyword TEXT NOT NULL,
             match_field TEXT NOT NULL DEFAULT 'counterparty',
+            weight INTEGER NOT NULL DEFAULT 10,
             priority INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (category_id) REFERENCES bill_categories(id)
+            match_mode TEXT NOT NULL DEFAULT 'contains',
+            is_enabled INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'user',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (category_id) REFERENCES bill_categories(id),
+            FOREIGN KEY (match_field) REFERENCES category_match_fields(field_key)
         );
 
         CREATE TABLE IF NOT EXISTS email_configs (
@@ -285,6 +318,8 @@ class DatabaseManager:
         CREATE INDEX IF NOT EXISTS idx_bills_account_id ON unified_bills(account_id);
         CREATE INDEX IF NOT EXISTS idx_bills_role_id ON unified_bills(role_id);
         CREATE INDEX IF NOT EXISTS idx_bills_category_id ON unified_bills(category_id);
+        CREATE INDEX IF NOT EXISTS idx_bills_category_source ON unified_bills(category_source);
+        CREATE INDEX IF NOT EXISTS idx_bills_category_manual ON unified_bills(is_category_manual_edited);
         CREATE INDEX IF NOT EXISTS idx_bills_assign_status ON unified_bills(assign_status);
         CREATE INDEX IF NOT EXISTS idx_bills_batch_id ON unified_bills(batch_id);
         CREATE INDEX IF NOT EXISTS idx_bills_is_deleted ON unified_bills(is_deleted);
@@ -304,38 +339,104 @@ class DatabaseManager:
         CREATE INDEX IF NOT EXISTS idx_snapshot_details_snapshot ON snapshot_details(snapshot_id);
         CREATE INDEX IF NOT EXISTS idx_snapshot_details_bill ON snapshot_details(bill_id);
         CREATE INDEX IF NOT EXISTS idx_role_families_family_id ON role_families(family_id);
+        CREATE INDEX IF NOT EXISTS idx_categories_parent ON bill_categories(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_category_keywords_category ON category_keywords(category_id);
+        CREATE INDEX IF NOT EXISTS idx_category_keywords_field ON category_keywords(match_field);
         """)
 
     def _insert_default_data(self) -> None:
         conn = self.get_connection()
+        self._ensure_default_seed_data(conn)
+
+    def _insert_default_bill_categories(self, conn) -> None:
         categories = [
-            (1, "餐饮美食", "🍽️", None, 1),
-            (2, "交通出行", "🚗", None, 2),
-            (3, "购物消费", "🛒", None, 3),
-            (4, "生活缴费", "🏠", None, 4),
-            (5, "通讯网络", "📱", None, 5),
-            (6, "医疗健康", "🏥", None, 6),
-            (7, "教育学习", "📚", None, 7),
-            (8, "休闲娱乐", "🎮", None, 8),
-            (9, "居住房租", "🏡", None, 9),
-            (10, "金融保险", "💰", None, 10),
-            (11, "人情往来", "🎁", None, 11),
-            (99, "其他支出", "📦", None, 99),
+            (1, "餐饮美食", "🍽️", None, 1, 1, 'system', 1),
+            (2, "交通出行", "🚗", None, 1, 2, 'system', 1),
+            (3, "购物消费", "🛒", None, 1, 3, 'system', 1),
+            (4, "生活缴费", "🏠", None, 1, 4, 'system', 1),
+            (5, "通讯网络", "📱", None, 1, 5, 'system', 1),
+            (6, "医疗健康", "🏥", None, 1, 6, 'system', 1),
+            (7, "教育学习", "📚", None, 1, 7, 'system', 1),
+            (8, "休闲娱乐", "🎮", None, 1, 8, 'system', 1),
+            (9, "居住房租", "🏡", None, 1, 9, 'system', 1),
+            (10, "金融保险", "💰", None, 1, 10, 'system', 1),
+            (11, "人情往来", "🎁", None, 1, 11, 'system', 1),
+            (12, "收入", "💵", None, 1, 12, 'system', 1),
+            (99, "其他支出(未命中)", "📦", None, 1, 99, 'system', 1),
         ]
         conn.executemany(
-            "INSERT OR IGNORE INTO bill_categories (id, name, icon, parent_id, sort_order) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO bill_categories (id, name, icon, parent_id, level, sort_order, source, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             categories,
         )
+
+    def _insert_default_system_basics(self, conn) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO families (id, name, is_default) VALUES (1, '默认家庭', 1)"
         )
-        # 创建默认角色，解决新账户 role_id=NULL 导致账单 assign_status='pending' 的问题
         conn.execute(
             "INSERT OR IGNORE INTO roles (id, name, role_type) VALUES (1, '未分配', 'personal')"
         )
         conn.execute(
             "INSERT OR IGNORE INTO role_families (role_id, family_id) VALUES (1, 1)"
         )
+
+    def _ensure_default_seed_data(self, conn) -> None:
+        self._insert_default_bill_categories(conn)
+        self._insert_default_category_match_fields(conn)
+        self._insert_default_category_keywords(conn)
+        self._insert_default_system_basics(conn)
+
+    def _insert_default_category_match_fields(self, conn) -> None:
+        fields = [
+            ('counterparty', '当前账单-交易对方', 'self', 'counterparty', 1, 1, 1),
+            ('product_desc', '当前账单-商品说明', 'self', 'product_desc', 1, 1, 2),
+            ('remark', '当前账单-备注', 'self', 'remark', 1, 1, 3),
+            ('all_text', '当前账单-全部文本', 'self', 'all_text', 1, 1, 4),
+            ('initiator_counterparty', '发起方-交易对方', 'initiator', 'counterparty', 1, 1, 5),
+            ('initiator_product_desc', '发起方-商品说明', 'initiator', 'product_desc', 1, 1, 6),
+            ('initiator_remark', '发起方-备注', 'initiator', 'remark', 1, 1, 7),
+            ('initiator_all_text', '发起方-全部文本', 'initiator', 'all_text', 1, 1, 8),
+        ]
+        conn.executemany(
+            "INSERT OR IGNORE INTO category_match_fields (field_key, label, source_scope, field_expr, is_system, is_enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            fields,
+        )
+
+    def _insert_default_category_keywords(self, conn) -> None:
+        rules = [
+            (1, '餐饮', 'all_text', 10, 10, 'contains', 1, 'system'),
+            (1, '美团', 'all_text', 20, 20, 'contains', 1, 'system'),
+            (1, '饿了么', 'all_text', 20, 20, 'contains', 1, 'system'),
+            (1, '星巴克', 'all_text', 30, 30, 'contains', 1, 'system'),
+            (1, '瑞幸', 'all_text', 30, 30, 'contains', 1, 'system'),
+            (2, '滴滴', 'all_text', 25, 20, 'contains', 1, 'system'),
+            (2, '地铁', 'all_text', 20, 15, 'contains', 1, 'system'),
+            (2, '公交', 'all_text', 20, 15, 'contains', 1, 'system'),
+            (3, '淘宝', 'all_text', 25, 20, 'contains', 1, 'system'),
+            (3, '京东', 'all_text', 25, 20, 'contains', 1, 'system'),
+            (4, '水费', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (4, '电费', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (5, '话费', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (6, '医院', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (8, '电影', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (10, '保险', 'all_text', 20, 10, 'contains', 1, 'system'),
+            (11, '红包', 'all_text', 15, 10, 'contains', 1, 'system'),
+        ]
+        for category_id, keyword, match_field, weight, priority, match_mode, is_enabled, source in rules:
+            exists = conn.execute(
+                "SELECT 1 FROM category_keywords WHERE category_id = ? AND keyword = ? AND match_field = ? AND match_mode = ? AND source = ? LIMIT 1",
+                (category_id, keyword, match_field, match_mode, source),
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                """
+                INSERT INTO category_keywords
+                (category_id, keyword, match_field, weight, priority, match_mode, is_enabled, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (category_id, keyword, match_field, weight, priority, match_mode, is_enabled, source),
+            )
 
     def _get_version(self) -> int:
         cursor = self.get_connection().execute("SELECT MAX(version) FROM schema_version")
@@ -393,6 +494,54 @@ class DatabaseManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_lookup ON account_aliases(channel, alias_type, alias_value)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_account ON account_aliases(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_merge_session ON account_aliases(merge_session_id)")
+
+    def _ensure_schema_v5(self) -> None:
+        """确保分类子系统字段存在；项目实际通过重建库应用 schema，这里保留轻量兜底。"""
+        conn = self.get_connection()
+        for column_name, column_sql in (
+            ('category_source', "TEXT NOT NULL DEFAULT 'auto'"),
+            ('category_score', 'INTEGER NOT NULL DEFAULT 0'),
+            ('category_rule_id', 'INTEGER'),
+            ('is_category_manual_edited', 'INTEGER NOT NULL DEFAULT 0'),
+        ):
+            if not self._column_exists(conn, 'unified_bills', column_name):
+                conn.execute(f"ALTER TABLE unified_bills ADD COLUMN {column_name} {column_sql}")
+        for column_name, column_sql in (
+            ('level', 'INTEGER NOT NULL DEFAULT 1'),
+            ('source', "TEXT NOT NULL DEFAULT 'user'"),
+            ('is_enabled', 'INTEGER NOT NULL DEFAULT 1'),
+            ('created_at', 'TEXT'),
+            ('updated_at', 'TEXT'),
+        ):
+            if not self._column_exists(conn, 'bill_categories', column_name):
+                conn.execute(f"ALTER TABLE bill_categories ADD COLUMN {column_name} {column_sql}")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS category_match_fields (
+                field_key TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                source_scope TEXT NOT NULL,
+                field_expr TEXT NOT NULL,
+                is_system INTEGER NOT NULL DEFAULT 1,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        for column_name, column_sql in (
+            ('weight', 'INTEGER NOT NULL DEFAULT 10'),
+            ('match_mode', "TEXT NOT NULL DEFAULT 'contains'"),
+            ('is_enabled', 'INTEGER NOT NULL DEFAULT 1'),
+            ('source', "TEXT NOT NULL DEFAULT 'user'"),
+            ('created_at', 'TEXT'),
+            ('updated_at', 'TEXT'),
+        ):
+            if not self._column_exists(conn, 'category_keywords', column_name):
+                conn.execute(f"ALTER TABLE category_keywords ADD COLUMN {column_name} {column_sql}")
+        conn.execute("UPDATE bill_categories SET level = CASE WHEN parent_id IS NULL THEN 1 ELSE 2 END")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_category_source ON unified_bills(category_source)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_category_manual ON unified_bills(is_category_manual_edited)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_parent ON bill_categories(parent_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_category ON category_keywords(category_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_field ON category_keywords(match_field)")
 
     def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
         """迁移 v2 到 v3：跨平台合并机制重构（不删除账单，使用 merged_group_id）"""

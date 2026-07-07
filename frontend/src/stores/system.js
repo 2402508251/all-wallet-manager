@@ -10,6 +10,7 @@ export const useSystemStore = defineStore('system', {
     accounts: [],
     categories: [],
     categoryKeywords: [],
+    categoryMatchFields: [],
     snapshots: [],
     emails: [],
     currentFamilyId: null,
@@ -168,6 +169,19 @@ export const useSystemStore = defineStore('system', {
     async saveCategoryKeywords(categoryId, keywords) {
       await call('save_category_keywords', { category_id: categoryId, keywords })
       this.categoryKeywords = keywords
+    },
+
+    async loadCategoryMatchFields() {
+      const data = await call('get_category_match_fields', {})
+      this.categoryMatchFields = data.list
+    },
+
+    async recategorizeBills(scope, options = {}) {
+      return await call('recategorize_bills', { scope, ...options })
+    },
+
+    async recategorizeBill(billId) {
+      return await call('recategorize_bill', { bill_id: billId })
     },
 
     // ─── 邮箱 ────────────────────────────

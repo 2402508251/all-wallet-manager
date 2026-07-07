@@ -276,6 +276,11 @@ class ApiBridge:
 
             success_count = 0
             duplicate_count = 0
+            classified_count = 0
+            unclassified_count = 0
+
+            from modules.categorizer import CategoryService
+            category_service = CategoryService(self.dal)
 
             with self.dal.transaction():
                 for i, rec in enumerate(result.records):
@@ -365,6 +370,13 @@ class ApiBridge:
                         post_action, bill_id, rec['channel'], batch_id,
                     )
 
+                    category_result = category_service.categorize_bill(bill_id, bill=imported_bill)
+                    category_service.apply_result(bill_id, category_result)
+                    if category_result.matched:
+                        classified_count += 1
+                    else:
+                        unclassified_count += 1
+
                     success_count += 1
 
                 self.dal.insert('import_batches', {
@@ -375,6 +387,7 @@ class ApiBridge:
                     'total_count': result.total,
                     'success_count': success_count,
                     'duplicate_count': duplicate_count,
+                    'unclassified_count': unclassified_count,
                     'import_time': now,
                 })
 
@@ -385,6 +398,8 @@ class ApiBridge:
                          'total': result.total,
                          'success': success_count,
                          'duplicate': duplicate_count,
+                         'classified': classified_count,
+                         'unclassified': unclassified_count,
                          'accounts_created': len(account_info.get('accounts', [])),
                      })},
                     'id = ?',
@@ -396,6 +411,8 @@ class ApiBridge:
                 'total': result.total,
                 'success': success_count,
                 'duplicate': duplicate_count,
+                'classified': classified_count,
+                'unclassified': unclassified_count,
                 'accounts_created': len(account_info.get('accounts', [])),
             })
 
@@ -617,6 +634,11 @@ class ApiBridge:
         if not data:
             return self.err('无有效更新字段')
 
+        if 'category_id' in data:
+            data['is_category_manual_edited'] = 1
+            data['category_source'] = 'manual'
+            data['category_score'] = 0
+            data['category_rule_id'] = None
         data['is_manual_edited'] = 1
         data['updated_at'] = self._now()
 
@@ -637,6 +659,11 @@ class ApiBridge:
         if not data:
             return self.err('无有效更新字段')
 
+        if 'category_id' in data:
+            data['is_category_manual_edited'] = 1
+            data['category_source'] = 'manual'
+            data['category_score'] = 0
+            data['category_rule_id'] = None
         data['updated_at'] = self._now()
         placeholders = ', '.join(['?' for _ in bill_ids])
         updated = self.dal.update(
@@ -1303,7 +1330,7 @@ class ApiBridge:
 
     def get_categories(self, params=None) -> dict:
         rows = self.dal.fetch_all(
-            "SELECT * FROM bill_categories ORDER BY sort_order")
+            "SELECT * FROM bill_categories ORDER BY level, parent_id, sort_order, id")
         return self.ok({'list': [dict(r) for r in rows]})
 
     def create_category(self, params=None) -> dict:
@@ -1311,36 +1338,86 @@ class ApiBridge:
         name = p.get('name', '')
         icon = p.get('icon', '')
         parent_id = p.get('parent_id')
+        level = 1
+        if parent_id:
+            parent = self.dal.fetch_one("SELECT id, level FROM bill_categories WHERE id = ?", (parent_id,))
+            if not parent:
+                return self.err('父分类不存在')
+            if parent['level'] != 1:
+                return self.err('仅支持两级分类')
+            level = 2
         cid = self.dal.insert('bill_categories', {
-            'name': name, 'icon': icon, 'parent_id': parent_id,
+            'name': name,
+            'icon': icon,
+            'parent_id': parent_id,
+            'level': level,
+            'sort_order': p.get('sort_order', 0),
+            'source': 'user',
+            'is_enabled': p.get('is_enabled', 1),
+            'created_at': self._now(),
+            'updated_at': self._now(),
         })
         return self.ok({'category_id': cid})
 
     def update_category(self, params=None) -> dict:
         p = params or {}
         category_id = p.get('category_id')
-        name = p.get('name')
-        icon = p.get('icon')
-        sort_order = p.get('sort_order')
+        current = self.dal.fetch_one("SELECT * FROM bill_categories WHERE id = ?", (category_id,))
+        if not current:
+            return self.err('分类不存在')
         data = {}
-        if name is not None:
-            data['name'] = name
-        if icon is not None:
-            data['icon'] = icon
-        if sort_order is not None:
-            data['sort_order'] = sort_order
+        for key in ('name', 'icon', 'sort_order', 'is_enabled'):
+            if p.get(key) is not None:
+                data[key] = p.get(key)
+        if 'parent_id' in p:
+            parent_id = p.get('parent_id')
+            if parent_id == category_id:
+                return self.err('不能选择自身作为父分类')
+            level = 1
+            if parent_id:
+                parent = self.dal.fetch_one("SELECT id, level FROM bill_categories WHERE id = ?", (parent_id,))
+                if not parent:
+                    return self.err('父分类不存在')
+                if parent['level'] != 1:
+                    return self.err('仅支持两级分类')
+                child = self.dal.fetch_one("SELECT id FROM bill_categories WHERE parent_id = ? LIMIT 1", (category_id,))
+                if child:
+                    return self.err('已有子分类的一级分类不能改为二级分类')
+                level = 2
+            data['parent_id'] = parent_id
+            data['level'] = level
+        if not data:
+            return self.ok()
+        data['updated_at'] = self._now()
         self.dal.update('bill_categories', data, 'id = ?', (category_id,))
         return self.ok()
 
     def delete_category(self, params=None) -> dict:
         category_id = (params or {}).get('category_id')
+        category = self.dal.fetch_one("SELECT * FROM bill_categories WHERE id = ?", (category_id,))
+        if not category:
+            return self.err('分类不存在')
+        if category.get('source') == 'system':
+            return self.err('系统分类不能删除，可选择禁用')
+        refs = [
+            self.dal.fetch_one("SELECT id FROM bill_categories WHERE parent_id = ? LIMIT 1", (category_id,)),
+            self.dal.fetch_one("SELECT id FROM category_keywords WHERE category_id = ? LIMIT 1", (category_id,)),
+            self.dal.fetch_one("SELECT id FROM unified_bills WHERE category_id = ? LIMIT 1", (category_id,)),
+        ]
+        if any(refs):
+            return self.err('分类已被子分类、规则或账单引用，不能删除')
         self.dal.delete('bill_categories', 'id = ?', (category_id,))
         return self.ok()
+
+    def get_category_match_fields(self, params=None) -> dict:
+        from modules.categorizer import CategoryService
+        service = CategoryService(self.dal)
+        return self.ok({'list': service.list_match_fields()})
 
     def get_category_keywords(self, params=None) -> dict:
         category_id = (params or {}).get('category_id')
         rows = self.dal.fetch_all(
-            "SELECT * FROM category_keywords WHERE category_id = ?",
+            "SELECT * FROM category_keywords WHERE category_id = ? ORDER BY priority DESC, weight DESC, id ASC",
             (category_id,))
         return self.ok({'list': [dict(r) for r in rows]})
 
@@ -1352,11 +1429,20 @@ class ApiBridge:
             with self.dal.transaction():
                 self.dal.delete('category_keywords', 'category_id = ?', (category_id,))
                 for kw in keywords:
+                    keyword = str(kw.get('keyword', '')).strip()
+                    if not keyword:
+                        continue
                     self.dal.insert('category_keywords', {
                         'category_id': category_id,
-                        'keyword': kw.get('keyword', ''),
+                        'keyword': keyword,
                         'match_field': kw.get('match_field', 'counterparty'),
+                        'weight': kw.get('weight', 10),
                         'priority': kw.get('priority', 0),
+                        'match_mode': kw.get('match_mode', 'contains'),
+                        'is_enabled': kw.get('is_enabled', 1),
+                        'source': kw.get('source', 'user'),
+                        'created_at': self._now(),
+                        'updated_at': self._now(),
                     })
             return self.ok()
         except Exception as e:
@@ -1372,6 +1458,32 @@ class ApiBridge:
         if result.get('success'):
             return self.ok(result)
         return self.err(result.get('message', '重新解析失败'))
+
+    def recategorize_bills(self, params=None) -> dict:
+        p = params or {}
+        from modules.categorizer import CategoryReclassifier
+        reclassifier = CategoryReclassifier(self.dal, self.snapshot)
+        try:
+            result = reclassifier.recategorize(
+                p.get('scope') or {'type': 'all'},
+                only_uncategorized=p.get('only_uncategorized', False),
+                include_income=p.get('include_income', False),
+            )
+            return self.ok(result)
+        except Exception as e:
+            return self.err(f'重新分类失败: {e}')
+
+    def recategorize_bill(self, params=None) -> dict:
+        bill_id = (params or {}).get('bill_id')
+        if not bill_id:
+            return self.err('未指定账单')
+        from modules.categorizer import CategoryReclassifier
+        reclassifier = CategoryReclassifier(self.dal, self.snapshot)
+        try:
+            result = reclassifier.recategorize({'type': 'bill_ids', 'bill_ids': [bill_id]})
+            return self.ok(result)
+        except Exception as e:
+            return self.err(f'重新分类失败: {e}')
 
     def list_snapshots(self, params=None) -> dict:
         limit = (params or {}).get('limit', 20)

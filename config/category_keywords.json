@@ -150,7 +150,7 @@
       ]
     },
     {
-      "category_name": "其他支出",
+      "category_name": "其他支出(未命中)",
       "keywords": [
         { "keyword": "手续费", "match_field": "product_desc", "priority": 4 },
         { "keyword": "服务费", "match_field": "product_desc", "priority": 3 }

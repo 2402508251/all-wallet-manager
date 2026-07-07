@@ -45,7 +45,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="counterparty" label="交易对方" min-width="130" show-overflow-tooltip />
+      <el-table-column prop="product_desc" label="商品说明" min-width="130" show-overflow-tooltip />
       <el-table-column label="收支" width="65">
         <template #default="{ row }">
           <span :class="directionClass(row.direction)">

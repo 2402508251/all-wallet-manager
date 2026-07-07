@@ -36,7 +36,7 @@
         <el-table-column prop="trade_time" label="交易时间" width="140">
           <template #default="{ row }">{{ row.trade_time?.slice(0, 16).replace('T', ' ') }}</template>
         </el-table-column>
-        <el-table-column prop="counterparty" label="交易对方" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="product_desc" label="商品说明" min-width="120" show-overflow-tooltip />
         <el-table-column label="金额" width="100" align="right">
           <template #default="{ row }">¥{{ (row.amount_cents / 100).toFixed(2) }}</template>
         </el-table-column>

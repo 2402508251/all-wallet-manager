@@ -119,12 +119,16 @@ class CCBParser(BaseParser):
                 trade_type_raw, 'ccb'
             )
 
-        counterparty_raw = mapped.get('counterparty_raw', '')
-        counterparty = self._parse_counterparty(counterparty_raw)
-
         product_desc = mapped.get('product_desc', '')
         if product_desc:
             product_desc = str(product_desc).strip()
+        remark = str(raw.get('摘要', '') or '').strip()
+
+        # 交易对方：优先原方式，脱敏时(以*开头)或为空时从"交易地点/附言"提取
+        counterparty_raw = mapped.get('counterparty_raw', '')
+        counterparty = self._parse_counterparty(counterparty_raw)
+        if (not counterparty or counterparty.startswith('*')) and product_desc:
+            counterparty = self._extract_counterparty_from_location(product_desc)
 
         return {
             'channel': 'ccb',
@@ -137,7 +141,7 @@ class CCBParser(BaseParser):
             'payment_method': '',
             'status': '',
             'channel_trade_no': channel_trade_no,
-            'remark': '',
+            'remark': remark,
         }
 
     def _parse_counterparty(self, raw: str) -> str:
@@ -148,6 +152,22 @@ class CCBParser(BaseParser):
             parts = raw.split('/')
             return parts[-1].strip() if parts else raw
         return raw
+
+    def _extract_counterparty_from_location(self, location: str) -> str:
+        """从"交易地点/附言"提取交易对方
+
+        典型格式:
+          - 平台-子平台-商户名 → 取最后一段
+          - 平台-场景-商户名  → 取最后一段
+          - 手机银行转账      → 直接返回
+        """
+        if not location:
+            return ''
+        location = str(location).strip()
+        if '-' in location:
+            parts = location.rsplit('-', 1)
+            return parts[-1].strip()
+        return location
 
     def _find_header(self, ws) -> int:
         for r in range(min(ws.nrows, 10)):

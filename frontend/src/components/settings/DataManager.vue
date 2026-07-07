@@ -3,6 +3,9 @@
     <!-- 重新解析 -->
     <ReparsePanel @done="refreshSnapshots" />
 
+    <!-- 重新分类 -->
+    <RecategorizePanel @done="refreshSnapshots" />
+
     <!-- 数据清理 -->
     <CleanupPanel @done="refreshSnapshots" />
 
@@ -15,6 +18,7 @@
 import { ref } from 'vue'
 import { useSystemStore } from '@/stores/system'
 import ReparsePanel from './ReparsePanel.vue'
+import RecategorizePanel from './RecategorizePanel.vue'
 import CleanupPanel from './CleanupPanel.vue'
 import SnapshotList from './SnapshotList.vue'
 

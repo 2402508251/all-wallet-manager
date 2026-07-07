@@ -19,7 +19,7 @@
         <el-tab-pane label="邮箱配置" name="email">
           <EmailSetting />
         </el-tab-pane>
-        <el-tab-pane label="分类关键词" name="keyword">
+        <el-tab-pane label="分类规则" name="keyword">
           <KeywordSetting />
         </el-tab-pane>
         <el-tab-pane label="数据管理" name="data">
