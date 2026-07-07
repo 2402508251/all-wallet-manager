@@ -45,11 +45,7 @@ test_upload.py
 scripts/test_*.py
 
 # Debug / maintenance scripts (one-off, not part of the app)
-scripts/check_*.py
-scripts/full_check.py
-scripts/restore_db.py
-scripts/set_version.py
-scripts/verify_migration.py
+scripts/
 
 # Claude Code assistant
 .claude/
