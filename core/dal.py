@@ -97,6 +97,15 @@ class DAL:
                 self.conn.commit()
             return cursor
 
+    def execute_batch(self, sql: str, params_list: list[tuple]) -> int:
+        if not params_list:
+            return 0
+        with self._lock:
+            cursor = self.conn.executemany(sql, params_list)
+            if not self._in_transaction:
+                self.conn.commit()
+            return cursor.rowcount
+
     def insert(self, table: str, data: dict) -> int:
         columns = ', '.join(data.keys())
         placeholders = ', '.join(['?' for _ in data])

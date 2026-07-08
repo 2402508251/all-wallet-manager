@@ -4,10 +4,13 @@ SQLite 数据库连接管理、建表、版本迁移
 PyWebView 为每个 JS API 调用创建独立线程，threading.local 多连接模式
 在 Windows 上极易产生文件锁竞争，改为单连接 + 锁最可靠
 """
+import logging
 import os
 import sqlite3
 import threading
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
@@ -29,15 +32,15 @@ class DatabaseManager:
             if cursor.fetchone() is None:
                 self._create_tables()
                 self._set_version(self.SCHEMA_VERSION)
+                self._ensure_default_seed_data(conn)
             else:
                 current_version = self._get_version()
-                if current_version < self.SCHEMA_VERSION:
-                    self._migrate(current_version, self.SCHEMA_VERSION)
-
-            self._ensure_schema_v4()
-            self._ensure_schema_v5()
-            self._ensure_schema_v6()
-            self._ensure_default_seed_data(conn)
+                if current_version != self.SCHEMA_VERSION:
+                    logger.warning(
+                        f"Database schema version mismatch: current={current_version}, expected={self.SCHEMA_VERSION}. "
+                        f"Please rebuild the database using init_db.sql script."
+                    )
+                self._ensure_default_seed_data(conn)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -53,17 +56,35 @@ class DatabaseManager:
             self._conn = conn
         return self._conn
 
-    def get_connection(self) -> sqlite3.Connection:
+    def _is_connection_valid(self) -> bool:
+        if self._conn is None:
+            return False
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except (sqlite3.Error, sqlite3.DatabaseError) as e:
+            logger.warning(f"Database connection check failed: {e}")
+            return False
+
+    def _reconnect_if_needed(self) -> sqlite3.Connection:
+        if not self._is_connection_valid():
+            logger.info("Reconnecting to database...")
+            self._conn = None
         return self._get_or_create_conn()
 
+    def get_connection(self) -> sqlite3.Connection:
+        with self._lock:
+            return self._reconnect_if_needed()
+
     def close(self) -> None:
-        """关闭数据库连接，释放文件锁"""
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                    logger.info("Database connection closed successfully")
+                except Exception as e:
+                    logger.error(f"Failed to close database connection: {e}")
+                self._conn = None
 
     def execute_in_transaction(self, func) -> any:
         with self._lock:
@@ -184,240 +205,3 @@ class DatabaseManager:
 
     def _set_version(self, version: int) -> None:
         self.get_connection().execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
-
-    def _migrate(self, from_version: int, to_version: int) -> None:
-        conn = self.get_connection()
-        if from_version < 3:
-            self._migrate_v2_to_v3(conn)
-        # 迁移完成后设置版本
-        self._set_version(to_version)
-
-    @staticmethod
-    def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-        return any(r[1] == column for r in rows)
-
-    def _ensure_schema_v4(self) -> None:
-        """确保账户别名与逻辑归并字段存在。
-
-        项目当前主要通过重建数据库应用 schema；这里保留轻量兜底，避免已有开发库
-        因缺少新字段无法启动。
-        """
-        conn = self.get_connection()
-        if not self._column_exists(conn, 'accounts', 'merged_into_account_id'):
-            conn.execute("ALTER TABLE accounts ADD COLUMN merged_into_account_id INTEGER")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS account_aliases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_id INTEGER NOT NULL,
-                channel TEXT NOT NULL,
-                alias_type TEXT NOT NULL,
-                alias_value TEXT NOT NULL,
-                source_kind TEXT NOT NULL DEFAULT 'manual',
-                source_account_id INTEGER,
-                merge_session_id TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (account_id) REFERENCES accounts(id),
-                FOREIGN KEY (source_account_id) REFERENCES accounts(id),
-                UNIQUE (account_id, channel, alias_type, alias_value)
-            )
-        """)
-        for column_name, column_sql in (
-            ('source_kind', "TEXT NOT NULL DEFAULT 'manual'"),
-            ('source_account_id', 'INTEGER'),
-            ('merge_session_id', 'TEXT'),
-        ):
-            if not self._column_exists(conn, 'account_aliases', column_name):
-                conn.execute(f"ALTER TABLE account_aliases ADD COLUMN {column_name} {column_sql}")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_merged_into ON accounts(merged_into_account_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_lookup ON account_aliases(channel, alias_type, alias_value)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_account ON account_aliases(account_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_account_aliases_merge_session ON account_aliases(merge_session_id)")
-
-    def _ensure_schema_v5(self) -> None:
-        """确保分类子系统字段存在；项目实际通过重建库应用 schema，这里保留轻量兜底。"""
-        conn = self.get_connection()
-        for column_name, column_sql in (
-            ('category_source', "TEXT NOT NULL DEFAULT 'auto'"),
-            ('category_score', 'INTEGER NOT NULL DEFAULT 0'),
-            ('category_rule_id', 'INTEGER'),
-            ('is_category_manual_edited', 'INTEGER NOT NULL DEFAULT 0'),
-        ):
-            if not self._column_exists(conn, 'unified_bills', column_name):
-                conn.execute(f"ALTER TABLE unified_bills ADD COLUMN {column_name} {column_sql}")
-        for column_name, column_sql in (
-            ('level', 'INTEGER NOT NULL DEFAULT 1'),
-            ('source', "TEXT NOT NULL DEFAULT 'user'"),
-            ('is_enabled', 'INTEGER NOT NULL DEFAULT 1'),
-            ('created_at', 'TEXT'),
-            ('updated_at', 'TEXT'),
-        ):
-            if not self._column_exists(conn, 'bill_categories', column_name):
-                conn.execute(f"ALTER TABLE bill_categories ADD COLUMN {column_name} {column_sql}")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS category_match_fields (
-                field_key TEXT PRIMARY KEY,
-                label TEXT NOT NULL,
-                source_scope TEXT NOT NULL,
-                field_expr TEXT NOT NULL,
-                is_system INTEGER NOT NULL DEFAULT 1,
-                is_enabled INTEGER NOT NULL DEFAULT 1,
-                sort_order INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        for column_name, column_sql in (
-            ('weight', 'INTEGER NOT NULL DEFAULT 10'),
-            ('match_mode', "TEXT NOT NULL DEFAULT 'contains'"),
-            ('is_enabled', 'INTEGER NOT NULL DEFAULT 1'),
-            ('source', "TEXT NOT NULL DEFAULT 'user'"),
-            ('created_at', 'TEXT'),
-            ('updated_at', 'TEXT'),
-        ):
-            if not self._column_exists(conn, 'category_keywords', column_name):
-                conn.execute(f"ALTER TABLE category_keywords ADD COLUMN {column_name} {column_sql}")
-        conn.execute("UPDATE bill_categories SET level = CASE WHEN parent_id IS NULL THEN 1 ELSE 2 END")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_category_source ON unified_bills(category_source)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_bills_category_manual ON unified_bills(is_category_manual_edited)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_parent ON bill_categories(parent_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_category ON category_keywords(category_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_field ON category_keywords(match_field)")
-
-    def _ensure_schema_v6(self) -> None:
-        """确保账务处理扩展表存在；项目实际通过重建库应用 schema，这里保留轻量兜底。"""
-        conn = self.get_connection()
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS transfer_pair_decisions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                out_bill_id INTEGER NOT NULL,
-                in_bill_id INTEGER NOT NULL,
-                decision TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (out_bill_id) REFERENCES unified_bills(id),
-                FOREIGN KEY (in_bill_id) REFERENCES unified_bills(id),
-                UNIQUE (out_bill_id, in_bill_id)
-            )
-        """)
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_pair_decisions_pair "
-            "ON transfer_pair_decisions(out_bill_id, in_bill_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_transfer_pair_decisions_decision "
-            "ON transfer_pair_decisions(decision)"
-        )
-
-    def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
-        """迁移 v2 到 v3：跨平台合并机制重构（不删除账单，使用 merged_group_id）"""
-        # 检查是否需要迁移（旧表是否有 merged_to_id 字段）
-        if not self._column_exists(conn, 'bill_accounting', 'merged_to_id'):
-            # 新表不需要迁移
-            return
-        
-        # 重建 bill_accounting 表，移除旧外键 merged_to_id -> unified_bills.id
-        # SQLite 不支持直接删除外键，需要重建表
-        
-        # 1. 创建新表（不含 merged_to_id 外键）
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bill_accounting_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bill_id INTEGER NOT NULL UNIQUE,
-                transfer_link_id TEXT,
-                is_credit INTEGER NOT NULL DEFAULT 0,
-                credit_account_id INTEGER,
-                merge_status TEXT NOT NULL DEFAULT 'normal',
-                merged_group_id TEXT,
-                real_payer_account_id INTEGER,
-                original_counterparty TEXT,
-                original_product_desc TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (bill_id) REFERENCES unified_bills(id),
-                FOREIGN KEY (real_payer_account_id) REFERENCES accounts(id),
-                FOREIGN KEY (credit_account_id) REFERENCES credit_accounts(id)
-            )
-        """)
-        
-        # 2. 复制数据（处理旧合并记录）
-        # 先复制普通记录（包含所有字段）
-        try:
-            # 尝试复制包含所有字段的数据
-            conn.execute("""
-                INSERT INTO bill_accounting_new (id, bill_id, transfer_link_id, is_credit, credit_account_id, merge_status, merged_group_id, real_payer_account_id, original_counterparty, original_product_desc, created_at)
-                SELECT id, bill_id, transfer_link_id, is_credit, credit_account_id, merge_status, NULL, NULL, original_counterparty, original_product_desc, created_at
-                FROM bill_accounting
-                WHERE merged_to_id IS NULL OR merge_status NOT IN ('merged_source', 'normal')
-            """)
-        except sqlite3.OperationalError:
-            # 如果旧表缺少某些字段，则只复制基本字段
-            conn.execute("""
-                INSERT INTO bill_accounting_new (id, bill_id, merge_status, merged_group_id, real_payer_account_id, credit_account_id)
-                SELECT id, bill_id, merge_status, NULL, NULL, credit_account_id
-                FROM bill_accounting
-                WHERE merged_to_id IS NULL OR merge_status NOT IN ('merged_source', 'normal')
-            """)
-        
-        # 3. 处理已合并的记录，生成 merged_group_id
-        merged_records = conn.execute(
-            "SELECT ba.id, ba.bill_id, ba.merge_status, ba.merged_to_id, ub.is_deleted, ub.account_id "
-            "FROM bill_accounting ba "
-            "JOIN unified_bills ub ON ba.bill_id = ub.id "
-            "WHERE ba.merge_status IN ('merged_source', 'normal') AND ba.merged_to_id IS NOT NULL"
-        ).fetchall()
-        
-        for record in merged_records:
-            ba_id = record['id']
-            bill_id = record['bill_id']
-            merge_status = record['merge_status']
-            merged_to_id = record['merged_to_id']
-            is_deleted = record['is_deleted']
-            
-            # 生成 merged_group_id
-            group_id = str(uuid.uuid4())
-            
-            if merge_status == 'merged_source':
-                # 恢复被删除的第三方记录（发起方）
-                conn.execute(
-                    "UPDATE unified_bills SET is_deleted = 0 WHERE id = ?",
-                    (bill_id,)
-                )
-                # 更新发起方账务记录
-                conn.execute(
-                    "UPDATE bill_accounting_new SET merged_group_id = ?, merge_status = 'merged_source' WHERE id = ?",
-                    (group_id, ba_id)
-                )
-                # 查找真实支付者账户
-                target_bill = conn.execute(
-                    "SELECT account_id FROM unified_bills WHERE id = ?", (merged_to_id,)
-                ).fetchone()
-                if target_bill and target_bill['account_id']:
-                    conn.execute(
-                        "UPDATE bill_accounting_new SET real_payer_account_id = ? WHERE id = ?",
-                        (target_bill['account_id'], ba_id)
-                    )
-            
-            elif merge_status == 'normal' and merged_to_id:
-                # 更新真实支付者账务记录（银行卡）为 merged_target
-                conn.execute(
-                    "UPDATE bill_accounting_new SET merged_group_id = ?, merge_status = 'merged_target', real_payer_account_id = ? WHERE id = ?",
-                    (group_id, record['account_id'], ba_id)
-                )
-                # 同时更新发起方的 merged_group_id（它们共享同一组）
-                source_ba = conn.execute(
-                    "SELECT id FROM bill_accounting_new WHERE bill_id = ?",
-                    (merged_to_id,)
-                ).fetchone()
-                if source_ba:
-                    conn.execute(
-                        "UPDATE bill_accounting_new SET merged_group_id = ? WHERE id = ?",
-                        (group_id, source_ba['id'])
-                    )
-        
-        # 4. 删除旧表
-        conn.execute("DROP TABLE bill_accounting")
-        
-        # 5. 重命名新表
-        conn.execute("ALTER TABLE bill_accounting_new RENAME TO bill_accounting")
-        
-        # 6. 创建索引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_accounting_merged_group ON bill_accounting(merged_group_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_accounting_real_payer ON bill_accounting(real_payer_account_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_accounting_bill ON bill_accounting(bill_id)")

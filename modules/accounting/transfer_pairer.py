@@ -54,14 +54,37 @@ def _is_semantically_similar(name_a: str, name_b: str) -> bool:
 
 class TransferPairer:
     INSTANT_CHANNELS = {'wechat', 'alipay'}
-    STRONG_INSTANT_MINUTES = 5
-    STRONG_OTHER_MINUTES = 120
-    WEAK_INSTANT_MINUTES = 10
-    WEAK_OTHER_MINUTES = 120
-    FEE_RATIO_LIMIT = 0.05
+    DEFAULT_CONFIG = {
+        'strong_instant_minutes': 5,
+        'strong_other_minutes': 120,
+        'weak_instant_minutes': 10,
+        'weak_other_minutes': 120,
+        'fee_ratio_limit': 0.05,
+    }
 
-    def __init__(self, dal: DAL):
+    def __init__(self, dal: DAL, config: dict | None = None):
         self.dal = dal
+        self.config = config or self.DEFAULT_CONFIG
+
+    @property
+    def STRONG_INSTANT_MINUTES(self):
+        return self.config.get('strong_instant_minutes', 5)
+
+    @property
+    def STRONG_OTHER_MINUTES(self):
+        return self.config.get('strong_other_minutes', 120)
+
+    @property
+    def WEAK_INSTANT_MINUTES(self):
+        return self.config.get('weak_instant_minutes', 10)
+
+    @property
+    def WEAK_OTHER_MINUTES(self):
+        return self.config.get('weak_other_minutes', 120)
+
+    @property
+    def FEE_RATIO_LIMIT(self):
+        return self.config.get('fee_ratio_limit', 0.05)
 
     def auto_pair_strong(self, record: dict) -> dict | None:
         bill_id = record.get('id')

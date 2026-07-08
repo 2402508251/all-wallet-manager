@@ -335,6 +335,99 @@ class CrossPlatformMerger:
             'initiator_bill_id': best_match['id'],
         }
 
+    def _do_merge(self, real_payer_record: dict, initiator_bill_id: int) -> dict | None:
+        """
+        内部合并方法，不包含事务包装，可在已有事务中调用。
+        参数：
+        - real_payer_record: 真实支付者记录（完整dict）
+        - initiator_bill_id: 发起方记录的bill_id
+        """
+        merged_group_id = str(uuid.uuid4())
+        real_payer_account_id = real_payer_record.get('account_id')
+        product_desc = real_payer_record.get('product_desc', '')
+        search_text = f"{product_desc} {real_payer_record.get('remark', '')}"
+
+        initiator = self.dal.fetch_one(
+            "SELECT * FROM unified_bills WHERE id = ?", (initiator_bill_id,)
+        )
+        if not initiator:
+            return None
+
+        bank_counterparty = real_payer_record.get('counterparty', '')
+        bank_product_desc = product_desc
+        initiator_counterparty = initiator['counterparty'] or ''
+        initiator_product_desc = initiator['product_desc'] or ''
+
+        DEFAULT_COUNTERPARTIES = {'银联', '', '—', '-'}
+
+        if not bank_counterparty or bank_counterparty in DEFAULT_COUNTERPARTIES:
+            new_counterparty = initiator_counterparty
+        else:
+            new_counterparty = f"{bank_counterparty} | {initiator_counterparty}" if initiator_counterparty else bank_counterparty
+
+        channel_label = '微信' if '微信' in search_text or 'WeChat' in search_text else '支付宝'
+        new_product_desc = f"{bank_product_desc} | [{channel_label}] {initiator_product_desc}" if initiator_product_desc else bank_product_desc
+
+        self.dal.update(
+            'unified_bills',
+            {
+                'counterparty': new_counterparty,
+                'product_desc': new_product_desc,
+            },
+            'id = ?',
+            (real_payer_record.get('id'),),
+        )
+
+        existing_accounting = self.dal.fetch_one(
+            "SELECT id FROM bill_accounting WHERE bill_id = ?",
+            (real_payer_record.get('id'),),
+        )
+        if existing_accounting:
+            self.dal.update(
+                'bill_accounting',
+                {
+                    'merge_status': 'merged_target',
+                    'merged_group_id': merged_group_id,
+                    'real_payer_account_id': real_payer_account_id,
+                    'original_counterparty': bank_counterparty,
+                    'original_product_desc': bank_product_desc,
+                },
+                'bill_id = ?',
+                (real_payer_record.get('id'),),
+            )
+        else:
+            self.dal.insert('bill_accounting', {
+                'bill_id': real_payer_record.get('id'),
+                'merge_status': 'merged_target',
+                'merged_group_id': merged_group_id,
+                'real_payer_account_id': real_payer_account_id,
+                'original_counterparty': bank_counterparty,
+                'original_product_desc': bank_product_desc,
+            })
+
+        self.dal.update(
+            'bill_accounting',
+            {
+                'merge_status': 'merged_source',
+                'merged_group_id': merged_group_id,
+                'real_payer_account_id': real_payer_account_id,
+            },
+            'bill_id = ?',
+            (initiator_bill_id,),
+        )
+
+        logger.info(
+            "_do_merge success: group=%s real_payer_bill_id=%s initiator_bill_id=%s",
+            merged_group_id, real_payer_record.get('id'), initiator_bill_id,
+        )
+
+        return {
+            'merged': True,
+            'merged_group_id': merged_group_id,
+            'real_payer_bill_id': real_payer_record.get('id'),
+            'initiator_bill_id': initiator_bill_id,
+        }
+
     def mark_orphan(self, initiator_record: dict) -> dict:
         """
         发起方记录（第三方支付/亲属卡被代付方）导入时，尝试匹配真实支付者记录：
@@ -421,7 +514,6 @@ class CrossPlatformMerger:
             except (ValueError, TypeError):
                 continue
 
-        # 先把当前发起方记录写成 orphan；若已有匹配目标，try_merge 才能查到它
         with self.dal.transaction():
             existing = self.dal.fetch_one(
                 "SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)
@@ -443,15 +535,14 @@ class CrossPlatformMerger:
                     'merge_status': 'orphan',
                 })
 
-        if best_match:
-            logger.info(
-                "mark_orphan matched_existing_target: bill_id=%s target_bill_id=%s diff_hours=%.4f",
-                bill_id, best_match['id'], best_time_diff,
-            )
-            # 找到了真实支付者，执行合并（try_merge 内部已使用事务）
-            result = self.try_merge(best_match)
-            if result:
-                return result
+            if best_match:
+                logger.info(
+                    "mark_orphan matched_existing_target: bill_id=%s target_bill_id=%s diff_hours=%.4f",
+                    bill_id, best_match['id'], best_time_diff,
+                )
+                result = self._do_merge(best_match, bill_id)
+                if result:
+                    return result
 
         logger.info(
             "mark_orphan success: bill_id=%s candidates=%s",

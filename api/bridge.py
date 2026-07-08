@@ -24,26 +24,40 @@ from core.dal import DAL
 from core.db_rebuild import rebuild_database
 from core.snapshot import SnapshotEngine
 from core.crypto_utils import CredentialEncryptor
+from core.trade_types import VALID_TRADE_TYPES, TRADE_TYPE_LABELS, get_trade_type_label
+from modules.accounting.credit_tracker import CreditTracker
+from modules.accounting.cross_platform_merger import CrossPlatformMerger
+from modules.accounting.transfer_pairer import TransferPairer
 
 
 logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger('audit')
 
-VALID_TRADE_TYPES = {
-    'consumption',
-    'credit_consumption',
-    'refund',
-    'transfer_out',
-    'transfer_in',
-    'repayment',
-    'repayment_mirror',
-    'fee',
-    'topup',
-    'withdrawal',
-    'investment',
-    'other_income',
-    'other_expense',
-    'other',
-}
+
+def audit_log(operation: str):
+    def decorator(func):
+        def wrapper(self, *args, **kwargs):
+            params = args[0] if args else kwargs.get('params')
+            try:
+                params_str = json.dumps(params, ensure_ascii=False, default=str)[:500]
+            except Exception as e:
+                params_str = f"<serialization_failed: {e}>"
+            audit_logger.info(
+                "operation=%s params=%s caller=%s",
+                operation,
+                params_str,
+                func.__name__,
+            )
+            result = func(self, *args, **kwargs)
+            audit_logger.info(
+                "operation=%s success=%s message=%s",
+                operation,
+                result.get('success', False),
+                result.get('message', '')[:200],
+            )
+            return result
+        return wrapper
+    return decorator
 
 
 class ApiBridge:
@@ -116,19 +130,20 @@ class ApiBridge:
         if filters.get('merge_status'):
             conditions.append("ba.merge_status = ?")
             sql_params.append(filters['merge_status'])
-            if filters.get('category_id'):
-                conditions.append("ub.category_id = ?")
-                sql_params.append(filters['category_id'])
-            if str(filters.get('is_uncategorized', '')).lower() in ('1', 'true'):
-                conditions.append("ub.category_id IS NULL")
-            if str(filters.get('is_internal_flow', '')).lower() in ('1', 'true'):
-                conditions.append("ub.trade_type IN ('transfer_out', 'transfer_in', 'repayment', 'repayment_mirror')")
-            if filters.get('keyword'):
-                conditions.append("(ub.counterparty LIKE ? OR ub.product_desc LIKE ? OR ub.remark LIKE ?)")
-                kw = f"%{filters['keyword']}%"
+        if filters.get('category_id'):
+            conditions.append("ub.category_id = ?")
+            sql_params.append(filters['category_id'])
+        if str(filters.get('is_uncategorized', '')).lower() in ('1', 'true'):
+            conditions.append("ub.category_id IS NULL")
+        if str(filters.get('is_internal_flow', '')).lower() in ('1', 'true'):
+            conditions.append("ub.trade_type IN ('transfer_out', 'transfer_in', 'repayment', 'repayment_mirror')")
+        if filters.get('keyword'):
+            conditions.append("(ub.counterparty LIKE ? OR ub.product_desc LIKE ? OR ub.remark LIKE ?)")
+            kw = f"%{filters['keyword']}%"
             sql_params.extend([kw, kw, kw])
         if filters.get('is_deleted') is not None:
-            conditions[0] = f"ub.is_deleted = {int(filters['is_deleted'])}"
+            conditions.append("ub.is_deleted = ?")
+            sql_params.append(int(filters['is_deleted']))
 
         return " AND ".join(conditions), sql_params
 
@@ -137,6 +152,35 @@ class ApiBridge:
             return None
         row = self.dal.fetch_one(f"SELECT id FROM {table} WHERE id = ?", (record_id,))
         return record_id if row else None
+
+    def _validate_string_field(self, value: str | None, max_length: int, field_name: str) -> tuple[str | None, str | None]:
+        if value is None:
+            return None, None
+        if len(value) > max_length:
+            return None, f'{field_name}长度不能超过{max_length}字符'
+        return value.strip() if value else None, None
+
+    def _validate_amount(self, amount: int | str | None) -> tuple[int | None, str | None]:
+        if amount is None:
+            return None, '金额不能为空'
+        try:
+            amount_int = int(amount)
+        except (TypeError, ValueError):
+            return None, '金额格式无效'
+        if amount_int <= 0:
+            return None, '金额必须大于0'
+        if amount_int > 10000000000:
+            return None, '金额超出合理范围'
+        return amount_int, None
+
+    def _validate_trade_time(self, trade_time: str | None) -> tuple[str | None, str | None]:
+        if not trade_time:
+            return None, '交易时间不能为空'
+        try:
+            datetime.fromisoformat(trade_time.replace('Z', '+00:00'))
+        except (ValueError, TypeError):
+            return None, '交易时间格式无效'
+        return trade_time, None
 
     def _resolve_bill_assignment(self, account_id=None, role_id=None) -> tuple[int | None, int | None, str]:
         resolved_account_id = self._validate_existing_id('accounts', account_id)
@@ -174,7 +218,6 @@ class ApiBridge:
         existing_accounting = self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)) or {}
         post_actions = []
 
-        from modules.accounting.credit_tracker import CreditTracker
         credit_tracker = CreditTracker(self.dal)
         credit_result = credit_tracker.identify_credit(bill)
         if credit_result:
@@ -226,7 +269,6 @@ class ApiBridge:
 
         merge_result = None
         if bill.get('channel') in ('wechat', 'alipay'):
-            from modules.accounting.cross_platform_merger import CrossPlatformMerger
             merger = CrossPlatformMerger(self.dal)
             merge_result = merger.mark_orphan(dict(bill)) or {}
             if merge_result.get('merged'):
@@ -234,7 +276,6 @@ class ApiBridge:
             elif merge_result.get('orphan'):
                 post_actions.append('mark_orphan')
         elif bill.get('channel') == 'ccb':
-            from modules.accounting.cross_platform_merger import CrossPlatformMerger
             merger = CrossPlatformMerger(self.dal)
             merge_result = merger.try_merge(dict(bill)) or {}
             if merge_result.get('merged'):
@@ -245,7 +286,6 @@ class ApiBridge:
                 "SELECT transfer_link_id FROM bill_accounting WHERE bill_id = ?", (bill_id,)
             )
             if not accounting or not accounting.get('transfer_link_id'):
-                from modules.accounting.transfer_pairer import TransferPairer
                 pairer = TransferPairer(self.dal)
                 transfer_result = pairer.auto_pair_strong(dict(bill))
                 if transfer_result and transfer_result.get('transfer_link_id'):
@@ -667,6 +707,7 @@ class ApiBridge:
             })
 
         except Exception as e:
+            logger.exception(f"parse_collection failed for record_id={record_id}")
             try:
                 self.dal.update(
                     'collection_records',
@@ -674,8 +715,8 @@ class ApiBridge:
                     'id = ?',
                     (record_id,),
                 )
-            except Exception:
-                pass
+            except Exception as update_err:
+                logger.error(f"Failed to update error status: {update_err}")
             return self.err(f'解析失败: {e}')
 
     def parse_batch(self, params=None) -> dict:
@@ -804,25 +845,37 @@ class ApiBridge:
 
         return self.ok({'total': total, 'list': [dict(r) for r in rows], 'summary': summary})
 
+    @audit_log('create_bill')
     def create_bill(self, params=None) -> dict:
         fields = (params or {}).get('fields') or {}
-        required = ('trade_time', 'trade_type', 'direction', 'amount_cents')
-        for key in required:
-            if fields.get(key) in (None, ''):
-                return self.err(f'缺少必填字段: {key}')
+        
+        trade_time, err = self._validate_trade_time(fields.get('trade_time'))
+        if err:
+            return self.err(err)
 
         trade_type = self._normalize_trade_type(fields.get('trade_type'))
         if trade_type not in VALID_TRADE_TYPES:
             return self.err('交易类型无效')
+
         direction = fields.get('direction')
         if direction not in ('income', 'expense', 'neutral'):
             return self.err('收支方向无效')
-        try:
-            amount_cents = int(fields.get('amount_cents'))
-        except (TypeError, ValueError):
-            return self.err('金额无效')
-        if amount_cents <= 0:
-            return self.err('金额必须大于0')
+
+        amount_cents, err = self._validate_amount(fields.get('amount_cents'))
+        if err:
+            return self.err(err)
+
+        counterparty, err = self._validate_string_field(fields.get('counterparty'), 200, '交易对方')
+        if err:
+            return self.err(err)
+
+        product_desc, err = self._validate_string_field(fields.get('product_desc'), 500, '商品说明')
+        if err:
+            return self.err(err)
+
+        remark, err = self._validate_string_field(fields.get('remark'), 1000, '备注')
+        if err:
+            return self.err(err)
 
         now = self._now()
         batch_id = f"manual:{uuid.uuid4()}"
@@ -843,16 +896,16 @@ class ApiBridge:
                 category_id = self._validate_existing_id('bill_categories', fields.get('category_id'))
                 bill_data = {
                     'channel': 'manual',
-                    'trade_time': fields.get('trade_time'),
+                    'trade_time': trade_time,
                     'trade_type': trade_type,
                     'direction': direction,
                     'amount_cents': amount_cents,
-                    'counterparty': fields.get('counterparty', ''),
-                    'product_desc': fields.get('product_desc', ''),
+                    'counterparty': counterparty or '',
+                    'product_desc': product_desc or '',
                     'payment_method': fields.get('payment_method', ''),
                     'status': fields.get('status', ''),
                     'channel_trade_no': channel_trade_no,
-                    'remark': fields.get('remark', ''),
+                    'remark': remark or '',
                     'account_id': account_id,
                     'role_id': role_id,
                     'category_id': category_id,
@@ -939,13 +992,6 @@ class ApiBridge:
             ]
             ws.append(headers)
             channel_labels = {'wechat': '微信', 'alipay': '支付宝', 'ccb': '建行', 'manual': '手工记账'}
-            trade_type_labels = {
-                'consumption': '消费', 'credit_consumption': '信用消费', 'refund': '退款',
-                'transfer_out': '转出', 'transfer_in': '转入', 'repayment': '还款',
-                'repayment_mirror': '还款镜像', 'fee': '手续费', 'topup': '充值',
-                'withdrawal': '提现', 'investment': '理财',
-                'other_income': '其他收入', 'other_expense': '其他支出', 'other': '其他',
-            }
             direction_labels = {'income': '收入', 'expense': '支出', 'neutral': '中性'}
             for row in rows:
                 d = dict(row)
@@ -958,7 +1004,7 @@ class ApiBridge:
                     d.get('assign_status'), d.get('is_manual_edited'), d.get('is_category_manual_edited'),
                     d.get('category_source'), d.get('is_system'), d.get('merge_status'),
                     channel_labels.get(d.get('channel'), d.get('channel')),
-                    trade_type_labels.get(d.get('trade_type'), d.get('trade_type')),
+                    get_trade_type_label(d.get('trade_type')),
                     direction_labels.get(d.get('direction'), d.get('direction')),
                 ])
             for col in range(1, len(headers) + 1):
@@ -1004,6 +1050,7 @@ class ApiBridge:
 
         return self.ok(result)
 
+    @audit_log('update_bill')
     def update_bill(self, params=None) -> dict:
         p = params or {}
         bill_id = p.get('bill_id')
@@ -1613,33 +1660,36 @@ class ApiBridge:
         family_id = p.get('family_id')
         role_id = p.get('role_id')
         hide_internal = bool(p.get('hide_internal', False))
+
+        start_dt = datetime.strptime(start_month, '%Y-%m')
+        end_dt = datetime.strptime(end_month, '%Y-%m')
+
         months = []
         income_list = []
         expense_list = []
 
-        start_dt = datetime.strptime(start_month, '%Y-%m')
-        end_dt = datetime.strptime(end_month, '%Y-%m')
         current = start_dt
-
         while current <= end_dt:
+            year = current.year
+            month = current.month
             month_str = current.strftime('%Y-%m')
+            month_start, month_end = self._month_bounds(year, month)
+            metrics = self._report_summary_metrics(
+                month_start,
+                month_end,
+                family_id,
+                role_id,
+                hide_internal=hide_internal,
+            )
+
             months.append(month_str)
+            income_list.append(metrics['income'])
+            expense_list.append(metrics['expense'])
 
-            summary = self.get_monthly_summary({
-                'year': current.year,
-                'month': current.month,
-                'family_id': family_id,
-                'role_id': role_id,
-                'hide_internal': hide_internal,
-            })
-            data = summary.get('data', {})
-            income_list.append(data.get('income', 0))
-            expense_list.append(data.get('expense', 0))
-
-            if current.month == 12:
-                current = current.replace(year=current.year + 1, month=1)
+            if month == 12:
+                current = current.replace(year=year + 1, month=1)
             else:
-                current = current.replace(month=current.month + 1)
+                current = current.replace(month=month + 1)
 
         return self.ok({
             'months': months,
@@ -2618,20 +2668,33 @@ class ApiBridge:
         description = ((params or {}).get('description') or '').strip()
         if not description:
             description = f"手动快照 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        
+        MAX_SNAPSHOT_BILLS = 500
         bill_ids = self.dal.fetch_all(
-            "SELECT id FROM unified_bills WHERE is_deleted = 0 AND is_system = 0"
+            "SELECT id FROM unified_bills WHERE is_deleted = 0 AND is_system = 0 LIMIT ?",
+            (MAX_SNAPSHOT_BILLS + 1,),
         )
         if not bill_ids:
             return self.err('暂无可创建快照的账单')
+        
         ids = [r['id'] for r in bill_ids]
+        warning = None
+        if len(ids) > MAX_SNAPSHOT_BILLS:
+            ids = ids[:MAX_SNAPSHOT_BILLS]
+            warning = f'账单数量超过{MAX_SNAPSHOT_BILLS}条，仅快照前{MAX_SNAPSHOT_BILLS}条'
+        
         snapshot_id = self.snapshot.create_snapshot('manual', description, ids)
         self.snapshot.finalize_snapshot(snapshot_id, ids)
-        return self.ok({
+        
+        result = {
             'snapshot_id': snapshot_id,
             'bill_count': len(ids),
             'description': description,
             'snapshot_type': 'manual',
-        })
+        }
+        if warning:
+            result['warning'] = warning
+        return self.ok(result)
 
     def cleanup_source_bills(self, params=None) -> dict:
         before_date = (params or {}).get('before_date')
@@ -2647,6 +2710,7 @@ class ApiBridge:
         deleted = self.snapshot.cleanup_old_snapshots(keep_count)
         return self.ok({'deleted_count': deleted})
 
+    @audit_log('reset_application')
     def reset_application(self, params=None) -> dict:
         p = params or {}
         if p.get('confirm_text') != 'RESET':
@@ -2669,16 +2733,20 @@ class ApiBridge:
                 'backup_path': result.get('backup_path'),
             })
         except Exception as e:
+            logger.exception("reset_application failed")
             try:
                 self.db.initialize()
                 self.dal = DAL(self.db)
                 self.snapshot = SnapshotEngine(self.db, dal=self.dal)
-            except Exception:
-                logger.exception("failed to reinitialize database after reset failure")
+                self._account_cache.clear()
+                self._default_ids = None
+            except Exception as recover_err:
+                logger.error(f"Failed to recover after reset failure: {recover_err}")
             return self.err(f'重置失败: {e}')
 
     # ─── 6.2.9 账单删除 ────────────────────────────
 
+    @audit_log('clear_all_bills')
     def clear_all_bills(self, params=None) -> dict:
         try:
             with self.dal.transaction():
@@ -2861,6 +2929,7 @@ class ApiBridge:
 
     # ─── 6.2.8 删除/回收站 ────────────────────────────────────
 
+    @audit_log('delete_bill')
     def delete_bill(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
         bill = self.dal.fetch_one(
@@ -2895,6 +2964,7 @@ class ApiBridge:
             )
         return self.ok({'deleted_id': bill_id})
 
+    @audit_log('restore_bill')
     def restore_bill(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
         bill = self.dal.fetch_one(
@@ -2913,6 +2983,7 @@ class ApiBridge:
         )
         return self.ok({'restored_id': bill_id})
 
+    @audit_log('permanent_delete_bill')
     def permanent_delete_bill(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
         bill = self.dal.fetch_one(
