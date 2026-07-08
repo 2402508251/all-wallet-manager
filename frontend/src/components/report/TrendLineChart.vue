@@ -1,6 +1,6 @@
 <template>
   <div class="chart-box trend-chart">
-    <h4 class="chart-title">消费趋势折线图 (近6个月)</h4>
+    <h4 class="chart-title">{{ title }}</h4>
     <div ref="chartRef" class="chart-inner"></div>
   </div>
 </template>
@@ -12,15 +12,74 @@ import { formatYuan } from '@/utils/formatters'
 
 const props = defineProps({
   data: { type: Object, default: () => ({}) },
+  title: { type: String, default: '趋势折线图' },
 })
 
 const chartRef = ref(null)
 
 const chartOption = computed(() => {
   const d = props.data || {}
-  const months = d.months || []
-  const income = d.income || []
-  const expense = d.expense || []
+  const granularity = d.granularity === 'day' ? 'day' : 'month'
+  const unitLabel = granularity === 'day' ? '日' : '月'
+  const hasStructuredMonths = Array.isArray(d.months) && d.months.length > 0 && typeof d.months[0] === 'object'
+  const months = hasStructuredMonths ? d.months.map(item => item.label || item.month) : (d.months || [])
+  const income = hasStructuredMonths ? d.months.map(item => item.income || 0) : (d.income || [])
+  const expense = hasStructuredMonths ? d.months.map(item => item.expense || 0) : (d.expense || [])
+  const net = hasStructuredMonths ? d.months.map(item => item.net || 0) : (d.net || [])
+
+  const series = [
+    {
+      name: `${unitLabel}支出`,
+      type: 'line',
+      data: expense,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 8,
+      itemStyle: { color: '#f56c6c' },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(245,108,108,0.3)' },
+            { offset: 1, color: 'rgba(245,108,108,0.02)' },
+          ],
+        },
+      },
+    },
+    {
+      name: `${unitLabel}收入`,
+      type: 'line',
+      data: income,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 8,
+      itemStyle: { color: '#67c23a' },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(103,194,58,0.3)' },
+            { offset: 1, color: 'rgba(103,194,58,0.02)' },
+          ],
+        },
+      },
+    },
+  ]
+
+  if (net.length) {
+    series.push({
+      name: `${unitLabel}结余`,
+      type: 'line',
+      data: net,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      itemStyle: { color: '#1d4ed8' },
+      lineStyle: { width: 2, type: 'dashed' },
+    })
+  }
 
   return {
     tooltip: {
@@ -34,7 +93,7 @@ const chartOption = computed(() => {
       },
     },
     legend: {
-      data: ['月支出', '月收入'],
+      data: series.map(item => item.name),
       bottom: 0,
     },
     grid: {
@@ -55,46 +114,7 @@ const chartOption = computed(() => {
         formatter: (v) => formatYuan(v, { withSymbol: false }),
       },
     },
-    series: [
-      {
-        name: '月支出',
-        type: 'line',
-        data: expense,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 8,
-        itemStyle: { color: '#f56c6c' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(245,108,108,0.3)' },
-              { offset: 1, color: 'rgba(245,108,108,0.02)' },
-            ],
-          },
-        },
-      },
-      {
-        name: '月收入',
-        type: 'line',
-        data: income,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 8,
-        itemStyle: { color: '#67c23a' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(103,194,58,0.3)' },
-              { offset: 1, color: 'rgba(103,194,58,0.02)' },
-            ],
-          },
-        },
-      },
-    ],
+    series,
   }
 })
 

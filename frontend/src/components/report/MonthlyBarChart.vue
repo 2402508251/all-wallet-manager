@@ -1,6 +1,6 @@
 <template>
   <div class="chart-box">
-    <h4 class="chart-title">月度收支柱状图</h4>
+    <h4 class="chart-title">{{ title }}</h4>
     <div ref="chartRef" class="chart-inner"></div>
   </div>
 </template>
@@ -12,6 +12,7 @@ import { formatYuan } from '@/utils/formatters'
 
 const props = defineProps({
   data: { type: Object, default: () => ({}) },
+  title: { type: String, default: '月度收支柱状图' },
 })
 
 const emit = defineEmits(['bar-click'])

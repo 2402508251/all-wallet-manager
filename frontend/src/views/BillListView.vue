@@ -101,6 +101,9 @@ onMounted(() => {
     billStore.applyQueryFilter(route.query)
   }
   billStore.queryBills()
+  if (route.query.recycle === '1') {
+    showRecycleBin.value = true
+  }
 })
 
 function handleSearch(filter) {

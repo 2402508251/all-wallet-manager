@@ -20,6 +20,8 @@ export const useBillStore = defineStore('bill', {
       trade_type: null,
       assign_status: null,
       merge_status: null,
+      is_uncategorized: null,
+      is_internal_flow: null,
       start_time: null,
       end_time: null,
       keyword: '',
@@ -166,6 +168,8 @@ export const useBillStore = defineStore('bill', {
         trade_type: null,
         assign_status: null,
         merge_status: null,
+        is_uncategorized: null,
+        is_internal_flow: null,
         start_time: null,
         end_time: null,
         keyword: '',
@@ -186,6 +190,8 @@ export const useBillStore = defineStore('bill', {
       if (query.assign_status) this.filter.assign_status = query.assign_status
       if (query.merge_status) this.filter.merge_status = query.merge_status
       if (query.trade_type) this.filter.trade_type = normalizeTradeType(query.trade_type)
+      if (query.is_uncategorized) this.filter.is_uncategorized = query.is_uncategorized
+      if (query.is_internal_flow) this.filter.is_internal_flow = query.is_internal_flow
       if (query.keyword) this.filter.keyword = query.keyword
     },
   },
