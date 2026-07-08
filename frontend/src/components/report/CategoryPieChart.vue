@@ -6,8 +6,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useECharts } from '@/composables/useECharts'
+import { formatYuan } from '@/utils/formatters'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
@@ -27,11 +28,12 @@ const chartOption = computed(() => {
   }))
 
   return {
+    color: ['#1d4ed8', '#16a34a', '#dc2626', '#d97706', '#7c3aed', '#0891b2', '#4b5563'],
     tooltip: {
       trigger: 'item',
       formatter: (params) => {
         const d = params.data
-        return `${params.marker}${params.name}<br/>金额: ¥${(params.value / 100).toLocaleString()}<br/>占比: ${params.percent}%<br/>笔数: ${d.count}`
+        return `${params.marker}${params.name}<br/>金额: ${formatYuan(params.value)}<br/>占比: ${params.percent}%<br/>笔数: ${d.count}`
       },
     },
     legend: {
@@ -68,29 +70,24 @@ const chartOption = computed(() => {
   }
 })
 
-const { updateChart } = useECharts(chartRef, () => chartOption.value)
+const { updateChart, getChart } = useECharts(chartRef, () => chartOption.value)
 
 // 绑定点击事件
 function bindClick() {
-  if (chartRef.value) {
-    const chart = chartRef.value._chartInstance
-    if (chart) {
-      chart.off('click')
-      chart.on('click', (params) => {
-        if (params.componentType === 'series') {
-          const cat = props.data[params.dataIndex]
-          if (cat) {
-            emit('slice-click', cat.category_name)
-          }
-        }
-      })
+  const chart = getChart()
+  if (!chart) return
+  chart.off('click')
+  chart.on('click', (params) => {
+    if (params.componentType === 'series') {
+      const cat = props.data[params.dataIndex]
+      if (cat) emit('slice-click', cat.category_name)
     }
-  }
+  })
 }
 
 watch(() => props.data, () => {
   updateChart()
-  setTimeout(bindClick, 100)
+  nextTick(bindClick)
 }, { deep: true })
 </script>
 

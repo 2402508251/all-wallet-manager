@@ -23,6 +23,7 @@ body {
   line-height: 1.5;
   min-width: var(--min-window-width);
   min-height: var(--min-window-height);
+  overflow: hidden;
 }
 
 a {

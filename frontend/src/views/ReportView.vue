@@ -1,8 +1,13 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title">统计报表</h2>
+    <section class="page-hero">
+      <div>
+        <div class="page-kicker">Reports</div>
+        <h2 class="page-title">月度统计报表</h2>
+        <p class="page-subtitle">查看收支摘要、分类分布、近 6 个月趋势，并下钻到对应账单明细。</p>
+      </div>
+    </section>
 
-    <!-- 筛选 -->
     <ReportFilter
       :filter="reportStore.filter"
       :hide-repayment="reportStore.hideRepayment"
@@ -12,12 +17,9 @@
       @toggle-repayment="handleToggleRepayment"
     />
 
-    <!-- 加载中 -->
     <div v-loading="reportStore.loading" class="report-content">
-      <!-- 月度摘要卡片 -->
       <SummaryCard :summary="reportStore.monthlySummary" />
 
-      <!-- 图表区域 -->
       <div class="chart-row">
         <MonthlyBarChart :data="reportStore.monthlySummary" />
         <CategoryPieChart
@@ -26,10 +28,8 @@
         />
       </div>
 
-      <!-- 趋势图 -->
       <TrendLineChart :data="reportStore.trendData" />
 
-      <!-- 分类排行表 -->
       <CategoryRankTable
         :data="reportStore.categoryDistribution"
         @row-click="handleCategoryClick"
@@ -58,11 +58,15 @@ onMounted(async () => {
   await Promise.all([
     systemStore.loadFamilies(),
     systemStore.loadRoles(null),
+    systemStore.loadCategories(),
     reportStore.loadAllReports(),
   ])
 })
 
-function handleFilterChange(filter) {
+async function handleFilterChange(filter) {
+  if (Object.prototype.hasOwnProperty.call(filter, 'family_id')) {
+    await systemStore.loadRoles(filter.family_id || null)
+  }
   reportStore.setFilter(filter)
 }
 
@@ -74,15 +78,18 @@ function handleCategoryClick(categoryName) {
   // 查找 category_id
   const cat = systemStore.categories.find(c => c.name === categoryName)
   const { start_time, end_time } = reportStore.dateRange
+  const query = {
+    category_id: cat?.id || '',
+    direction: 'expense',
+    start_time,
+    end_time,
+  }
+  if (reportStore.filter.family_id) query.family_id = reportStore.filter.family_id
+  if (reportStore.filter.role_id) query.role_id = reportStore.filter.role_id
 
   router.push({
     path: '/bills',
-    query: {
-      category_id: cat?.id || '',
-      direction: 'expense',
-      start_time,
-      end_time,
-    },
+    query,
   })
 }
 </script>

@@ -1,7 +1,10 @@
 <template>
   <div class="card-box">
     <div class="action-bar">
-      <h3>采集结果列表 (共 {{ total }} 条)</h3>
+      <div>
+        <div class="section-title">采集记录</div>
+        <div class="section-subtitle">共 {{ total }} 条，失败和待解析记录优先处理</div>
+      </div>
       <div class="action-buttons">
         <el-button
           type="danger"
@@ -126,6 +129,12 @@
 import { ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useCollectionStore } from '@/stores/collection'
+import {
+  channelLabel,
+  channelTag,
+  collectionStatusLabel,
+  collectionStatusTag,
+} from '@/utils/formatters'
 
 const props = defineProps({
   collections: { type: Array, default: () => [] },
@@ -168,24 +177,16 @@ async function handleSetChannel(row, channel) {
   row.channel = channel
 }
 
-function channelLabel(channel) {
-  const map = { wechat: '微信', alipay: '支付宝', ccb: '建行', unknown: '未知' }
-  return map[channel] || channel
-}
-
 function channelTagType(channel) {
-  const map = { wechat: 'success', alipay: 'primary', ccb: 'warning' }
-  return map[channel] || 'info'
+  return channelTag(channel)
 }
 
 function statusLabel(status) {
-  const map = { pending: '待解析', parsing: '解析中', parsed: '已解析', error: '失败' }
-  return map[status] || status
+  return collectionStatusLabel(status)
 }
 
 function statusType(status) {
-  const map = { pending: 'info', parsing: 'warning', parsed: 'success', error: 'danger' }
-  return map[status] || 'info'
+  return collectionStatusTag(status)
 }
 
 function isZipFile(filename) {
@@ -198,6 +199,13 @@ function isPdfFile(filename) {
 </script>
 
 <style scoped>
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}
+
 .table-footer {
   display: flex;
   justify-content: flex-end;

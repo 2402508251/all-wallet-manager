@@ -1,8 +1,13 @@
 <template>
   <div class="card-box">
     <div class="action-bar">
-      <span>账单列表 (共 {{ total }} 条)</span>
-      <div style="display: flex; gap: 8px">
+      <div>
+        <div class="section-title">账单列表</div>
+        <div class="section-subtitle">
+          共 {{ total }} 条<span v-if="selectedIds.length > 0">，已选 {{ selectedIds.length }} 条</span>
+        </div>
+      </div>
+      <div class="table-actions">
         <el-button
           v-if="selectedIds.length > 0"
           type="primary"
@@ -122,6 +127,16 @@ import { ref } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useBillStore } from '@/stores/bill'
 import { useSystemStore } from '@/stores/system'
+import {
+  channelLabel as formatChannelLabel,
+  channelTag as formatChannelTag,
+  directionClass as formatDirectionClass,
+  directionLabel as formatDirectionLabel,
+  formatDateTime,
+  formatSignedYuan,
+  tradeTypeLabel as formatTradeTypeLabel,
+  tradeTypeTag as formatTradeTypeTag,
+} from '@/utils/formatters'
 
 const props = defineProps({
   bills: { type: Array, default: () => [] },
@@ -193,23 +208,19 @@ function handleSizeChange(size) {
 }
 
 function channelLabel(ch) {
-  const map = { wechat: '微信', alipay: '支付宝', ccb: '建行' }
-  return map[ch] || ch
+  return formatChannelLabel(ch)
 }
 
 function channelTag(ch) {
-  const map = { wechat: 'success', alipay: 'primary', ccb: 'warning' }
-  return map[ch] || 'info'
+  return formatChannelTag(ch)
 }
 
 function directionLabel(dir) {
-  const map = { income: '收入', expense: '支出', neutral: '中性' }
-  return map[dir] || dir
+  return formatDirectionLabel(dir)
 }
 
 function directionClass(dir) {
-  const map = { income: 'amount-income', expense: 'amount-expense', neutral: 'amount-neutral' }
-  return map[dir] || ''
+  return formatDirectionClass(dir)
 }
 
 function amountClass(row) {
@@ -219,40 +230,19 @@ function amountClass(row) {
 }
 
 function tradeTypeLabel(type) {
-  const map = {
-    credit_consumption: '信用',
-    transfer_out: '转出',
-    transfer_in: '转入',
-    repayment: '还款',
-    fee: '手续费',
-    mirror: '镜像',
-    refund: '退款',
-  }
-  return map[type] || type
+  return formatTradeTypeLabel(type)
 }
 
 function tradeTypeTag(type) {
-  const map = {
-    credit_consumption: 'warning',
-    transfer_out: '',
-    transfer_in: 'success',
-    repayment: 'info',
-    fee: 'danger',
-    mirror: 'info',
-    refund: 'success',
-  }
-  return map[type] || 'info'
+  return formatTradeTypeTag(type)
 }
 
 function formatAmount(cents, direction) {
-  const yuan = (cents / 100).toFixed(2)
-  const prefix = direction === 'income' ? '+' : direction === 'expense' ? '-' : ''
-  return `${prefix}¥${yuan}`
+  return formatSignedYuan(cents, direction)
 }
 
 function formatTime(timeStr) {
-  if (!timeStr) return ''
-  return timeStr.slice(0, 16).replace('T', ' ')
+  return formatDateTime(timeStr)
 }
 
 function getCategoryName(categoryId) {
@@ -269,6 +259,13 @@ function getRoleName(roleId) {
 </script>
 
 <style scoped>
+.table-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .table-footer {
   display: flex;
   justify-content: flex-end;

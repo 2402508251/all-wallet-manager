@@ -27,7 +27,7 @@
 
       <el-select
         :model-value="filter.role_id"
-        placeholder="角色"
+        placeholder="角色视角"
         clearable
         size="default"
         @update:model-value="handleRoleChange"
@@ -51,9 +51,6 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useSystemStore } from '@/stores/system'
-
 const props = defineProps({
   filter: { type: Object, required: true },
   hideRepayment: { type: Boolean, default: false },
@@ -63,8 +60,6 @@ const props = defineProps({
 
 const emit = defineEmits(['update:filter', 'toggle-repayment'])
 
-const systemStore = useSystemStore()
-
 function handleMonthChange(value) {
   if (value) {
     const [year, month] = value.split('-')
@@ -73,10 +68,11 @@ function handleMonthChange(value) {
 }
 
 function handleFamilyChange(value) {
-  emit('update:filter', { family_id: value })
+  emit('update:filter', { family_id: value || null, role_id: null })
 }
 
 function handleRoleChange(value) {
-  emit('update:filter', { role_id: value })
+  emit('update:filter', { role_id: value || null })
 }
+
 </script>

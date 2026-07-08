@@ -1,29 +1,38 @@
-/* styles/variables.css — CSS 自定义属性 */
+/* styles/variables.css - application design tokens */
 
 :root {
-  --color-primary: #409eff;
-  --color-primary-light: #79bbff;
-  --color-primary-dark: #2979cc;
-  --color-success: #67c23a;
-  --color-warning: #e6a23c;
-  --color-danger: #f56c6c;
-  --color-info: #909399;
+  --color-primary: #1d4ed8;
+  --color-primary-light: #dbeafe;
+  --color-primary-soft: #eff6ff;
+  --color-primary-dark: #1e3a8a;
+  --color-success: #16a34a;
+  --color-success-soft: #dcfce7;
+  --color-warning: #d97706;
+  --color-warning-soft: #fef3c7;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fee2e2;
+  --color-info: #64748b;
+  --color-info-soft: #f1f5f9;
 
-  --color-text-primary: #303133;
-  --color-text-regular: #606266;
-  --color-text-secondary: #909399;
-  --color-text-placeholder: #c0c4cc;
+  --color-text-primary: #111827;
+  --color-text-regular: #374151;
+  --color-text-secondary: #6b7280;
+  --color-text-placeholder: #9ca3af;
 
-  --bg-page: #f5f7fa;
+  --bg-page: #f3f6fb;
+  --bg-shell: #0f172a;
+  --bg-shell-active: rgba(255, 255, 255, 0.12);
   --bg-card: #ffffff;
-  --border-color: #dcdfe6;
-  --border-color-light: #e4e7ed;
-  --border-color-lighter: #ebeef5;
+  --bg-card-subtle: #f8fafc;
+  --border-color: #d1d5db;
+  --border-color-light: #e5e7eb;
+  --border-color-lighter: #edf2f7;
 
   --font-size-base: 14px;
   --font-size-small: 12px;
   --font-size-large: 16px;
   --font-size-xl: 20px;
+  --font-size-xxl: 24px;
 
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -31,15 +40,17 @@
   --spacing-lg: 24px;
   --spacing-xl: 32px;
 
-  --nav-height: 56px;
+  --nav-height: 64px;
+  --sidebar-width: 236px;
   --drawer-width: 500px;
-  --content-max-width: 1400px;
+  --content-max-width: 1680px;
   --min-window-width: 1024px;
   --min-window-height: 600px;
 
   --radius-base: 4px;
   --radius-lg: 8px;
+  --radius-xl: 12px;
 
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-hover: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
+  --shadow-hover: 0 10px 28px rgba(15, 23, 42, 0.1);
 }

@@ -1,4 +1,12 @@
-/* styles/element-overrides.css — Element Plus 主题覆盖 */
+/* styles/element-overrides.css - Element Plus theme adjustments */
+
+:root {
+  --el-color-primary: var(--color-primary);
+  --el-color-success: var(--color-success);
+  --el-color-warning: var(--color-warning);
+  --el-color-danger: var(--color-danger);
+  --el-border-radius-base: var(--radius-base);
+}
 
 /* 表格紧凑模式 */
 .el-table--compact .el-table__row td {
@@ -16,13 +24,14 @@
   font-weight: 600;
 }
 
-/* 导航菜单激活项 */
-.el-menu--horizontal {
-  border-bottom: 1px solid var(--border-color-lighter);
+.el-table {
+  --el-table-header-bg-color: var(--bg-card-subtle);
+  --el-table-header-text-color: var(--color-text-regular);
+  --el-table-row-hover-bg-color: var(--color-primary-soft);
 }
 
-.el-menu--horizontal > .el-menu-item.is-active {
-  border-bottom-color: var(--color-primary);
+.el-table th.el-table__cell {
+  font-weight: 700;
 }
 
 /* 表单在弹窗中的间距 */
@@ -30,12 +39,20 @@
   margin-bottom: 0;
 }
 
-/* 页面标题 */
-.page-title {
-  font-size: var(--font-size-xl);
+.el-button {
   font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: var(--spacing-md);
+}
+
+.el-card {
+  border-radius: var(--radius-lg);
+}
+
+.el-dialog {
+  border-radius: var(--radius-lg);
+}
+
+.el-tabs__item {
+  font-weight: 600;
 }
 
 /* Tab 内容内边距 */

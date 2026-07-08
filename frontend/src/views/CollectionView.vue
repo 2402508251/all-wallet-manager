@@ -1,36 +1,56 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title">账单采集</h2>
+    <section class="page-hero">
+      <div>
+        <div class="page-kicker">Collection</div>
+        <h2 class="page-title">账单采集工作台</h2>
+        <p class="page-subtitle">通过本地文件或邮箱主动同步账单，完成渠道识别、解析和结果确认。</p>
+      </div>
+      <div class="collection-stats">
+        <div>
+          <strong>{{ collectionStore.total }}</strong>
+          <span>采集记录</span>
+        </div>
+        <div>
+          <strong>{{ pendingCount }}</strong>
+          <span>待处理</span>
+        </div>
+        <div>
+          <strong>{{ errorCount }}</strong>
+          <span>失败</span>
+        </div>
+      </div>
+    </section>
 
-    <!-- 拖拽上传区域 -->
-    <FileUploader @upload-success="onUploadSuccess" />
+    <section class="collection-workflow">
+      <FileUploader @upload-success="onUploadSuccess" />
 
-    <!-- 邮箱拉取区 -->
-    <div class="card-box email-section">
-      <div class="email-header">
-        <span>📧 通过邮箱拉取账单</span>
-        <div class="email-actions">
-          <el-button size="small" @click="openEmailConfig">
+      <div class="card-box email-section">
+        <div class="email-header">
+          <div>
+            <div class="section-title">邮箱主动同步</div>
+            <div class="section-subtitle">仅在点击同步后连接 IMAP 拉取账单附件</div>
+          </div>
+          <div class="email-actions">
+          <el-button @click="openEmailConfig">
             <el-icon><Setting /></el-icon>
             邮箱配置
           </el-button>
           <el-button
             v-if="emailConfigs.length > 0"
             type="primary"
-            size="small"
             @click="handleSyncBills"
           >
             <el-icon><Refresh /></el-icon>
             同步账单
           </el-button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- 任务进度 -->
     <ProgressPanel />
 
-    <!-- 采集结果列表 -->
     <CollectionTable
       :collections="collectionStore.collections"
       :total="collectionStore.total"
@@ -71,6 +91,12 @@ const zipPwdRef = ref(null)
 const parseResultRef = ref(null)
 
 const emailConfigs = computed(() => collectionStore.emailConfigs)
+const pendingCount = computed(() => {
+  return collectionStore.collections.filter(row => row.status === 'pending' || row.status === 'parsing').length
+})
+const errorCount = computed(() => {
+  return collectionStore.collections.filter(row => row.status === 'error').length
+})
 
 onMounted(() => {
   collectionStore.loadCollections()
@@ -198,18 +224,61 @@ async function handleDeleteBills(recordIds) {
 </script>
 
 <style scoped>
+.collection-workflow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.8fr);
+  gap: var(--spacing-md);
+  align-items: stretch;
+}
+
+.collection-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 96px);
+  gap: var(--spacing-sm);
+}
+
+.collection-stats div {
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-color-lighter);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  text-align: center;
+}
+
+.collection-stats strong {
+  display: block;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.collection-stats span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
 .email-section {
   margin-bottom: var(--spacing-md);
+  height: 100%;
 }
 
 .email-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: var(--spacing-md);
 }
 
 .email-actions {
   display: flex;
   gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1200px) {
+  .collection-workflow {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

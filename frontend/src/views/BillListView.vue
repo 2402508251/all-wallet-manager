@@ -1,11 +1,19 @@
 <template>
   <div class="page-container">
-    <h2 class="page-title">账单管理</h2>
+    <section class="page-hero">
+      <div>
+        <div class="page-kicker">Bills</div>
+        <h2 class="page-title">账单管理</h2>
+        <p class="page-subtitle">查询、编辑、批量维护账单，并通过回收站恢复误删数据。</p>
+      </div>
+      <el-button @click="showRecycleBin = true">
+        <el-icon><Delete /></el-icon>
+        回收站
+      </el-button>
+    </section>
 
-    <!-- 筛选条件 -->
     <BillFilter @search="handleSearch" @reset="handleReset" />
 
-    <!-- 账单表格 -->
     <BillTable
       :bills="billStore.bills"
       :total="billStore.total"
@@ -14,7 +22,6 @@
       @batch-delete="handleBatchDelete"
     />
 
-    <!-- 账单详情抽屉 -->
     <BillDetailDrawer
       :bill-id="selectedBillId"
       @close="selectedBillId = null"
@@ -22,15 +29,6 @@
       @delete="onDetailDeleted"
     />
 
-    <!-- 回收站入口 -->
-    <div class="recycle-bin-entry">
-      <el-button size="small" @click="showRecycleBin = true">
-        <el-icon><Delete /></el-icon>
-        回收站
-      </el-button>
-    </div>
-
-    <!-- 回收站弹窗 -->
     <el-dialog v-model="showRecycleBin" title="回收站" width="900px" append-to-body>
       <el-table v-loading="recycleLoading" :data="deletedBills" size="small" empty-text="回收站为空">
         <el-table-column prop="trade_time" label="交易时间" width="140">
@@ -47,7 +45,7 @@
           </template>
         </el-table-column>
       </el-table>
-      <div style="margin-top: 12px; display: flex; justify-content: space-between">
+      <div class="recycle-footer">
         <el-button size="small" type="danger" @click="handleEmptyRecycleBin">清空回收站</el-button>
         <el-button size="small" @click="showRecycleBin = false">关闭</el-button>
       </div>
@@ -159,10 +157,9 @@ watch(showRecycleBin, (val) => {
 </script>
 
 <style scoped>
-.recycle-bin-entry {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 10;
+.recycle-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--spacing-md);
 }
 </style>

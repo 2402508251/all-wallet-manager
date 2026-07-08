@@ -54,14 +54,23 @@ class ApiBridge:
 
     def ensure_default_family_and_role(self) -> dict:
         if self._default_ids is not None:
-            return self._default_ids
+            cached_family = self.dal.fetch_one(
+                "SELECT id FROM families WHERE id = ?", (self._default_ids['family_id'],)
+            )
+            cached_role = self.dal.fetch_one(
+                "SELECT id FROM roles WHERE id = ?", (self._default_ids['role_id'],)
+            )
+            if cached_family and cached_role:
+                return self._default_ids
+            logger.warning("default family/role cache invalidated: %s", self._default_ids)
+            self._default_ids = None
 
-        with self.dal.transaction():
+        def ensure_rows():
             family = self.dal.fetch_one(
-                "SELECT id FROM families WHERE name = '未分配'"
+                "SELECT id FROM families WHERE name = '默认家庭'"
             )
             if not family:
-                family_id = self.dal.insert('families', {'name': '未分配', 'is_default': 1})
+                family_id = self.dal.insert('families', {'name': '默认家庭', 'is_default': 1})
             else:
                 family_id = family['id']
 
@@ -85,8 +94,13 @@ class ApiBridge:
                     'role_id': role_id,
                     'family_id': family_id,
                 })
+            return {'role_id': role_id, 'family_id': family_id}
 
-        self._default_ids = {'role_id': role_id, 'family_id': family_id}
+        if self.dal.conn.in_transaction:
+            self._default_ids = ensure_rows()
+        else:
+            with self.dal.transaction():
+                self._default_ids = ensure_rows()
         return self._default_ids
 
     def _resolve_canonical_account_id(self, account_id: int) -> int:
@@ -264,13 +278,6 @@ class ApiBridge:
             extractor = AccountExtractor()
             account_info = extractor.extract(channel, file_path)
 
-            payment_method_to_account = {}
-            for acc in account_info.get('accounts', []):
-                account_id = self.get_or_create_account(
-                    acc['tag'], acc['name'], channel, acc
-                )
-                payment_method_to_account[acc['payment_method']] = account_id
-
             batch_id = str(uuid.uuid4())
             now = self._now()
 
@@ -283,6 +290,13 @@ class ApiBridge:
             category_service = CategoryService(self.dal)
 
             with self.dal.transaction():
+                payment_method_to_account = {}
+                for acc in account_info.get('accounts', []):
+                    account_id = self.get_or_create_account(
+                        acc['tag'], acc['name'], channel, acc
+                    )
+                    payment_method_to_account[acc['payment_method']] = account_id
+
                 for i, rec in enumerate(result.records):
                     existing = self.dal.fetch_one(
                         "SELECT id FROM unified_bills WHERE channel = ? AND channel_trade_no = ?",
@@ -307,8 +321,23 @@ class ApiBridge:
                         account = self.dal.fetch_one(
                             "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                         )
-                        if account and account['role_id']:
-                            role_id = account['role_id']
+                        if not account:
+                            logger.warning(
+                                "parse_collection ignored invalid account_id=%s record_id=%s trade_no=%s",
+                                account_id, record_id, rec.get('channel_trade_no'),
+                            )
+                            account_id = None
+                        elif account['role_id']:
+                            role = self.dal.fetch_one(
+                                "SELECT id FROM roles WHERE id = ?", (account['role_id'],)
+                            )
+                            if role:
+                                role_id = account['role_id']
+                            else:
+                                logger.warning(
+                                    "parse_collection ignored invalid role_id=%s for account_id=%s record_id=%s trade_no=%s",
+                                    account['role_id'], account_id, record_id, rec.get('channel_trade_no'),
+                                )
 
                     assign_status = 'assigned' if (account_id and role_id) else 'pending'
 
@@ -785,24 +814,32 @@ class ApiBridge:
 
     # ─── 6.2.6 统计报表 ────────────────────────────
 
+    def _append_report_scope_filters(self, conditions: list, sql_params: list, family_id=None, role_id=None) -> None:
+        if family_id:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM role_families rf WHERE rf.role_id = ub.role_id AND rf.family_id = ?)"
+            )
+            sql_params.append(family_id)
+        if role_id:
+            conditions.append("ub.role_id = ?")
+            sql_params.append(role_id)
+
     def get_monthly_summary(self, params=None) -> dict:
         p = params or {}
         year = p.get('year')
         month = p.get('month')
         family_id = p.get('family_id')
+        role_id = p.get('role_id')
         start = f"{year}-{month:02d}-01T00:00:00+08:00"
         if month == 12:
             end = f"{year + 1}-01-01T00:00:00+08:00"
         else:
             end = f"{year}-{month + 1:02d}-01T00:00:00+08:00"
 
-        base_query = "FROM unified_bills ub LEFT JOIN role_families rf ON ub.role_id = rf.role_id"
+        base_query = "FROM unified_bills ub"
         conditions = ["ub.is_deleted = 0", "ub.trade_time >= ?", "ub.trade_time < ?"]
         sql_params = [start, end]
-
-        if family_id:
-            conditions.append("rf.family_id = ?")
-            sql_params.append(family_id)
+        self._append_report_scope_filters(conditions, sql_params, family_id, role_id)
 
         where = " AND ".join(conditions)
 
@@ -842,6 +879,7 @@ class ApiBridge:
         year = p.get('year')
         month = p.get('month')
         family_id = p.get('family_id')
+        role_id = p.get('role_id')
         direction = p.get('direction', 'expense')
         start = f"{year}-{month:02d}-01T00:00:00+08:00"
         if month == 12:
@@ -854,10 +892,7 @@ class ApiBridge:
             "ub.direction = ?",
         ]
         sql_params = [start, end, direction]
-
-        if family_id:
-            conditions.append("rf.family_id = ?")
-            sql_params.append(family_id)
+        self._append_report_scope_filters(conditions, sql_params, family_id, role_id)
 
         where = " AND ".join(conditions)
 
@@ -865,7 +900,6 @@ class ApiBridge:
             f"SELECT bc.name as category_name, bc.icon, "
             f"SUM(ub.amount_cents) as total_amount, COUNT(*) as count "
             f"FROM unified_bills ub "
-            f"LEFT JOIN role_families rf ON ub.role_id = rf.role_id "
             f"LEFT JOIN bill_categories bc ON ub.category_id = bc.id "
             f"WHERE {where} "
             f"GROUP BY ub.category_id ORDER BY total_amount DESC",
@@ -879,6 +913,7 @@ class ApiBridge:
         start_month = p.get('start_month')
         end_month = p.get('end_month')
         family_id = p.get('family_id')
+        role_id = p.get('role_id')
         months = []
         income_list = []
         expense_list = []
@@ -892,7 +927,10 @@ class ApiBridge:
             months.append(month_str)
 
             summary = self.get_monthly_summary({
-                'year': current.year, 'month': current.month, 'family_id': family_id
+                'year': current.year,
+                'month': current.month,
+                'family_id': family_id,
+                'role_id': role_id,
             })
             data = summary.get('data', {})
             income_list.append(data.get('income', 0))
@@ -1910,6 +1948,12 @@ class ApiBridge:
                 )
                 self.dal.execute(
                     "DELETE FROM unified_bills WHERE batch_id = ?", (batch_id,),
+                )
+                self.dal.update(
+                    'collection_records',
+                    {'batch_id': None, 'status': 'pending', 'parse_result': None, 'error_msg': None},
+                    'batch_id = ?',
+                    (batch_id,),
                 )
                 self.dal.execute(
                     "DELETE FROM import_batches WHERE batch_id = ?", (batch_id,),

@@ -1,9 +1,14 @@
 """分类服务入口。"""
+import logging
+
 from core.dal import DAL
 from .field_resolver import FieldResolver
 from .models import CategoryResult
 from .rule_repository import CategoryRuleRepository
 from .scorer import CategoryScorer
+
+
+logger = logging.getLogger(__name__)
 
 
 class CategoryService:
@@ -43,13 +48,29 @@ class CategoryService:
         return result
 
     def apply_result(self, bill_id: int, result: CategoryResult) -> int:
-        if result.matched:
-            data = {
-                'category_id': result.category_id,
-                'category_source': 'auto',
-                'category_score': result.score,
-                'category_rule_id': result.rule_id,
-            }
+        if result.matched and result.category_id:
+            category = self.dal.fetch_one(
+                "SELECT id FROM bill_categories WHERE id = ? AND is_enabled = 1",
+                (result.category_id,),
+            )
+            if category:
+                data = {
+                    'category_id': result.category_id,
+                    'category_source': 'auto',
+                    'category_score': result.score,
+                    'category_rule_id': result.rule_id,
+                }
+            else:
+                logger.warning(
+                    "category result ignored invalid category_id=%s for bill_id=%s",
+                    result.category_id, bill_id,
+                )
+                data = {
+                    'category_id': None,
+                    'category_source': 'none',
+                    'category_score': 0,
+                    'category_rule_id': None,
+                }
         else:
             data = {
                 'category_id': None,

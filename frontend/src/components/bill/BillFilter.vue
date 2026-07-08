@@ -81,11 +81,13 @@
         size="default"
       />
 
-      <el-button type="primary" size="default" @click="handleSearch">
-        <el-icon><Search /></el-icon>
-        查询
-      </el-button>
-      <el-button size="default" @click="handleReset">重置</el-button>
+      <div class="filter-actions">
+        <el-button type="primary" size="default" @click="handleSearch">
+          <el-icon><Search /></el-icon>
+          查询
+        </el-button>
+        <el-button size="default" @click="handleReset">重置</el-button>
+      </div>
     </div>
   </div>
 </template>

@@ -8,6 +8,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useECharts } from '@/composables/useECharts'
+import { formatYuan } from '@/utils/formatters'
 
 const props = defineProps({
   data: { type: Object, default: () => ({}) },
@@ -24,7 +25,7 @@ const chartOption = computed(() => {
       trigger: 'axis',
       formatter: (params) => {
         const items = params.map(p =>
-          `${p.marker}${p.seriesName}: ¥${(p.value / 100).toLocaleString()}`
+          `${p.marker}${p.seriesName}: ${formatYuan(p.value)}`
         )
         return items.join('<br/>')
       },
@@ -47,7 +48,7 @@ const chartOption = computed(() => {
     yAxis: {
       type: 'value',
       axisLabel: {
-        formatter: (v) => `¥${(v / 100).toFixed(0)}`,
+        formatter: (v) => formatYuan(v, { withSymbol: false }),
       },
     },
     series: [

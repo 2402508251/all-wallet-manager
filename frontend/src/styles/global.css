@@ -1,16 +1,14 @@
-/* styles/global.css — 全局通用样式 */
+/* styles/global.css - shared application layout and utilities */
 
 #app {
-  display: flex;
-  flex-direction: column;
   min-height: 100vh;
 }
 
-/* 主内容区 */
 .app-content {
   flex: 1;
-  margin-top: var(--nav-height);
+  min-width: 0;
   padding: var(--spacing-lg);
+  overflow: auto;
 }
 
 .page-container {
@@ -19,55 +17,105 @@
   width: 100%;
 }
 
-/* 卡片容器 */
+.page-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.page-kicker {
+  color: var(--color-primary);
+  font-size: var(--font-size-small);
+  font-weight: 700;
+  margin-bottom: var(--spacing-xs);
+}
+
+.page-title {
+  color: var(--color-text-primary);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.page-subtitle {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  margin-top: var(--spacing-sm);
+  max-width: 720px;
+}
+
 .card-box {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color-lighter);
   box-shadow: var(--shadow-card);
   padding: var(--spacing-md);
   margin-bottom: var(--spacing-md);
 }
 
-/* 操作栏 */
+.surface-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color-lighter);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
 .action-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--spacing-md);
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
   flex-wrap: wrap;
 }
 
-/* 筛选栏 */
+.section-title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-large);
+  font-weight: 700;
+}
+
+.section-subtitle {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+  margin-top: 2px;
+}
+
 .filter-bar {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  align-items: end;
   gap: var(--spacing-sm);
-  flex-wrap: wrap;
-  margin-bottom: var(--spacing-md);
 }
 
 .filter-bar .el-select,
 .filter-bar .el-input {
-  width: 160px;
+  width: 100%;
 }
 
 .filter-bar .el-date-picker {
-  width: 260px;
+  width: 100%;
 }
 
-/* 统计卡片行 */
+.filter-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}
+
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-lg);
 }
 
-/* 图表行 */
 .chart-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-md);
 }
@@ -75,38 +123,42 @@
 .chart-box {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color-lighter);
   box-shadow: var(--shadow-card);
   padding: var(--spacing-md);
 }
 
 .chart-box .chart-inner {
   width: 100%;
-  height: 350px;
+  height: 320px;
 }
 
-/* 空状态 */
 .empty-block {
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: var(--spacing-sm);
   padding: var(--spacing-xl);
   min-height: 200px;
+  color: var(--color-text-secondary);
 }
 
-/* 金额颜色 */
 .amount-income {
   color: var(--color-success);
+  font-variant-numeric: tabular-nums;
 }
 
 .amount-expense {
   color: var(--color-danger);
+  font-variant-numeric: tabular-nums;
 }
 
 .amount-neutral {
   color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* 标签/徽章 */
 .tag-pending {
   color: var(--color-warning);
 }
@@ -121,4 +173,26 @@
 
 .tag-merged {
   color: var(--color-primary);
+}
+
+.metric-value {
+  color: var(--color-text-primary);
+  font-size: 28px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.text-muted {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 1200px) {
+  .app-content {
+    padding: var(--spacing-md);
+  }
+
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
 }

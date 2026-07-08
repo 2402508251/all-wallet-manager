@@ -1,5 +1,12 @@
 <template>
   <div class="card-box">
+    <div class="uploader-header">
+      <div>
+        <div class="section-title">本地文件导入</div>
+        <div class="section-subtitle">支持微信、支付宝、建设银行账单文件，可多选</div>
+      </div>
+      <el-tag size="small" type="info">本地处理</el-tag>
+    </div>
     <div
       class="upload-area"
       :class="{ 'is-uploading': uploading }"
@@ -14,7 +21,7 @@
       <template v-else>
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
         <div class="upload-text">
-          <p class="upload-title">点击选择微信/支付宝/建行账单文件</p>
+          <p class="upload-title">点击选择账单文件</p>
           <p class="upload-types">支持 .xlsx .csv .xls .zip .pdf（可多选）</p>
         </div>
       </template>
@@ -70,18 +77,20 @@ async function handleSelectFiles() {
 <style scoped>
 .upload-area {
   width: 100%;
-  border: 2px dashed var(--border-color);
+  border: 1px dashed var(--border-color);
   border-radius: var(--radius-lg);
-  padding: var(--spacing-xl) var(--spacing-md);
+  padding: 36px var(--spacing-md);
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+  background: var(--bg-card-subtle);
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
   user-select: none;
 }
 
 .upload-area:hover {
   border-color: var(--color-primary);
-  background: rgba(64, 158, 255, 0.03);
+  background: var(--color-primary-soft);
+  transform: translateY(-1px);
 }
 
 .upload-area.is-uploading {
@@ -91,8 +100,8 @@ async function handleSelectFiles() {
 }
 
 .upload-icon {
-  font-size: 48px;
-  color: var(--color-primary-light);
+  font-size: 44px;
+  color: var(--color-primary);
   margin-bottom: var(--spacing-sm);
 }
 
@@ -107,6 +116,7 @@ async function handleSelectFiles() {
 
 .upload-title {
   font-size: var(--font-size-large);
+  font-weight: 700;
   color: var(--color-text-primary);
   margin-bottom: var(--spacing-xs);
 }
@@ -114,5 +124,13 @@ async function handleSelectFiles() {
 .upload-types {
   font-size: var(--font-size-small);
   color: var(--color-text-secondary);
+}
+
+.uploader-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
 }
 </style>

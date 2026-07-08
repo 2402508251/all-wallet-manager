@@ -159,6 +159,12 @@ export const useBillStore = defineStore('bill', {
       if (query.end_time) this.filter.end_time = query.end_time
       if (query.channel) this.filter.channel = query.channel
       if (query.family_id) this.filter.family_id = Number(query.family_id)
+      if (query.role_id) this.filter.role_id = Number(query.role_id)
+      if (query.account_id) this.filter.account_id = Number(query.account_id)
+      if (query.assign_status) this.filter.assign_status = query.assign_status
+      if (query.merge_status) this.filter.merge_status = query.merge_status
+      if (query.trade_type) this.filter.trade_type = query.trade_type
+      if (query.keyword) this.filter.keyword = query.keyword
     },
   },
 })

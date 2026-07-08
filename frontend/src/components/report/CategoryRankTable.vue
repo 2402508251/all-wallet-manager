@@ -16,7 +16,7 @@
       </el-table-column>
       <el-table-column label="金额" width="120" align="right">
         <template #default="{ row }">
-          ¥{{ ((row.total_amount || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}
+          {{ formatYuan(row.total_amount || 0) }}
         </template>
       </el-table-column>
       <el-table-column label="占比" width="80" align="right">
@@ -35,6 +35,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { formatYuan } from '@/utils/formatters'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
