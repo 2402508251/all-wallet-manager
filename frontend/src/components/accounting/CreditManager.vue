@@ -1,7 +1,10 @@
 <template>
   <div class="credit-manager">
     <div class="credit-records-header">
-      <h4>信用账户列表</h4>
+      <div>
+        <div class="section-title">信用账户列表</div>
+        <div class="section-subtitle">查看当前信用账户、额度与关联状态</div>
+      </div>
       <el-button type="primary" size="small" @click="handleCreateAccount">新建信用账户</el-button>
     </div>
     <CreditAccountTable
@@ -13,7 +16,10 @@
     <el-divider />
 
     <div class="credit-records-header">
-      <h4>信用消费记录 ({{ currentMonth }})</h4>
+      <div>
+        <div class="section-title">信用消费记录</div>
+        <div class="section-subtitle">{{ currentMonth }}，按家庭筛选当前月信用消费与还款</div>
+      </div>
       <el-select v-model="familyFilter" placeholder="家庭视角" clearable size="small" @change="loadRecords">
         <el-option v-for="f in families" :key="f.id" :label="f.name" :value="f.id" />
       </el-select>
@@ -22,7 +28,12 @@
 
     <el-divider />
 
-    <h4>还款记录 ({{ currentMonth }})</h4>
+    <div class="action-bar compact-gap">
+      <div>
+        <div class="section-title">还款记录</div>
+        <div class="section-subtitle">用于追踪当月内部还款流转</div>
+      </div>
+    </div>
     <RepayRecordTable :records="accountingStore.repayRecords" />
 
     <CreditAccountDialog
@@ -82,13 +93,7 @@ async function handleDeleteAccount(account) {
 .credit-records-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-}
-
-h4 {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: var(--spacing-sm);
+  align-items: flex-start;
+  gap: var(--spacing-md);
 }
 </style>

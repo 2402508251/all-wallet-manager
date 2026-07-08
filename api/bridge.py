@@ -28,6 +28,21 @@ from core.crypto_utils import CredentialEncryptor
 
 logger = logging.getLogger(__name__)
 
+VALID_TRADE_TYPES = {
+    'consumption',
+    'credit_consumption',
+    'refund',
+    'transfer_out',
+    'transfer_in',
+    'repayment',
+    'repayment_mirror',
+    'fee',
+    'topup',
+    'withdrawal',
+    'investment',
+    'other',
+}
+
 
 class ApiBridge:
     def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager, app_dir: str):
@@ -52,6 +67,14 @@ class ApiBridge:
 
     def _now(self) -> str:
         return datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+
+    def _normalize_trade_type(self, trade_type):
+        value = str(trade_type or '').strip()
+        if not value:
+            return None
+        if value == 'mirror':
+            value = 'repayment_mirror'
+        return value
 
     def _ensure_bill_accounting_row(self, bill_id: int, data=None) -> dict:
         existing = self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,))
@@ -658,8 +681,9 @@ class ApiBridge:
                 conditions.append("ub.direction = ?")
                 sql_params.append(filters['direction'])
             if filters.get('trade_type'):
+                trade_type = self._normalize_trade_type(filters['trade_type'])
                 conditions.append("ub.trade_type = ?")
-                sql_params.append(filters['trade_type'])
+                sql_params.append(trade_type)
             if filters.get('start_time'):
                 conditions.append("ub.trade_time >= ?")
                 sql_params.append(filters['start_time'])
@@ -766,6 +790,15 @@ class ApiBridge:
         data = {k: v for k, v in fields.items() if k in allowed}
         if not data:
             return self.err('无有效更新字段')
+
+        if 'trade_type' in data:
+            trade_type = self._normalize_trade_type(data.get('trade_type'))
+            if trade_type is None:
+                data['trade_type'] = None
+            elif trade_type not in VALID_TRADE_TYPES:
+                return self.err('交易类型无效')
+            else:
+                data['trade_type'] = trade_type
 
         if 'category_id' in data:
             data['is_category_manual_edited'] = 1
@@ -1704,15 +1737,24 @@ class ApiBridge:
 
     def get_category_keywords(self, params=None) -> dict:
         category_id = (params or {}).get('category_id')
+        from modules.categorizer import CategoryService
+        service = CategoryService(self.dal)
         rows = self.dal.fetch_all(
             "SELECT * FROM category_keywords WHERE category_id = ? ORDER BY priority DESC, weight DESC, id ASC",
             (category_id,))
-        return self.ok({'list': [dict(r) for r in rows]})
+        result = []
+        for row in rows:
+            item = dict(row)
+            item['match_field'] = service.normalize_match_field(item.get('match_field') or 'counterparty')
+            result.append(item)
+        return self.ok({'list': result})
 
     def save_category_keywords(self, params=None) -> dict:
         p = params or {}
         category_id = p.get('category_id')
         keywords = p.get('keywords', [])
+        from modules.categorizer import CategoryService
+        service = CategoryService(self.dal)
         try:
             with self.dal.transaction():
                 self.dal.delete('category_keywords', 'category_id = ?', (category_id,))
@@ -1720,10 +1762,11 @@ class ApiBridge:
                     keyword = str(kw.get('keyword', '')).strip()
                     if not keyword:
                         continue
+                    match_field = service.normalize_match_field(kw.get('match_field', 'counterparty'))
                     self.dal.insert('category_keywords', {
                         'category_id': category_id,
                         'keyword': keyword,
-                        'match_field': kw.get('match_field', 'counterparty'),
+                        'match_field': match_field,
                         'weight': kw.get('weight', 10),
                         'priority': kw.get('priority', 0),
                         'match_mode': kw.get('match_mode', 'contains'),

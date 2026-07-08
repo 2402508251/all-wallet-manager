@@ -4,6 +4,16 @@
   min-height: 100vh;
 }
 
+.app-content,
+.page-container,
+.card-box,
+.surface-box,
+.chart-box,
+.empty-block,
+.text-muted {
+  user-select: text;
+}
+
 .app-content {
   flex: 1;
   min-width: 0;

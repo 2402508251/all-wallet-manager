@@ -3,6 +3,11 @@
 import { defineStore } from 'pinia'
 import { call } from '@/utils/bridge'
 
+function normalizeTradeType(tradeType) {
+  if (!tradeType) return tradeType
+  return tradeType === 'mirror' ? 'repayment_mirror' : tradeType
+}
+
 export const useBillStore = defineStore('bill', {
   state: () => ({
     filter: {
@@ -163,7 +168,7 @@ export const useBillStore = defineStore('bill', {
       if (query.account_id) this.filter.account_id = Number(query.account_id)
       if (query.assign_status) this.filter.assign_status = query.assign_status
       if (query.merge_status) this.filter.merge_status = query.merge_status
-      if (query.trade_type) this.filter.trade_type = query.trade_type
+      if (query.trade_type) this.filter.trade_type = normalizeTradeType(query.trade_type)
       if (query.keyword) this.filter.keyword = query.keyword
     },
   },

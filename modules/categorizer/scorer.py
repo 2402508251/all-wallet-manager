@@ -52,7 +52,17 @@ class CategoryScorer:
         if match_field.startswith('initiator_'):
             key = match_field.replace('initiator_', '', 1)
             return context.initiator_fields.get(key, '')
-        return context.self_fields.get(match_field, '')
+        return self._merged_field_value(context, match_field)
+
+    def _merged_field_value(self, context: MatchContext, match_field: str) -> str:
+        values = []
+        self_value = context.self_fields.get(match_field, '')
+        initiator_value = context.initiator_fields.get(match_field, '')
+        if self_value:
+            values.append(self_value)
+        if initiator_value and initiator_value not in values:
+            values.append(initiator_value)
+        return ' '.join(values)
 
     def _matches(self, target: str, rule: CategoryRule) -> bool:
         target_norm = _norm(target)

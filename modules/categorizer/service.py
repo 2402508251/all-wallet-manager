@@ -26,7 +26,49 @@ class CategoryService:
         self._category_cache = {}
 
     def list_match_fields(self) -> list[dict]:
-        return self.repository.list_match_fields(enabled_only=False)
+        rows = self.repository.list_match_fields(enabled_only=False)
+        fields = []
+        seen = set()
+        for row in rows:
+            normalized = self.normalize_match_field(row.get('field_key') or '')
+            if not normalized or normalized in seen:
+                continue
+            fields.append({
+                'field_key': normalized,
+                'label': self.match_field_label(normalized),
+                'help_text': self.match_field_help_text(normalized),
+                'is_enabled': row.get('is_enabled', 1),
+                'sort_order': row.get('sort_order', 0),
+            })
+            seen.add(normalized)
+        return fields
+
+    @staticmethod
+    def normalize_match_field(match_field: str) -> str:
+        field = str(match_field or '').strip()
+        if field.startswith('initiator_'):
+            return field.replace('initiator_', '', 1)
+        return field
+
+    @staticmethod
+    def match_field_label(match_field: str) -> str:
+        labels = {
+            'counterparty': '交易对方',
+            'product_desc': '商品说明',
+            'remark': '备注',
+            'all_text': '全部文本',
+        }
+        return labels.get(match_field, match_field)
+
+    @staticmethod
+    def match_field_help_text(match_field: str) -> str:
+        helps = {
+            'counterparty': '匹配交易对方名称；会同时参考账单本身和真实发起方文本。',
+            'product_desc': '匹配商品说明；适合商户名不稳定但说明文字明确的场景。',
+            'remark': '匹配备注、附言等补充文本。',
+            'all_text': '把交易对方、商品说明、备注合并后统一匹配，最宽松也最推荐先尝试。',
+        }
+        return helps.get(match_field, '')
 
     def categorize_bill(self, bill_id: int, bill: dict | None = None) -> CategoryResult:
         if bill and not self._should_categorize(bill):

@@ -1,8 +1,8 @@
 <template>
-  <el-table :data="candidates" style="width: 100%" size="small" empty-text="暂无待确认配对">
+  <el-table :data="candidates" size="small" empty-text="暂无待确认配对">
     <el-table-column label="转出时间" width="140">
       <template #default="{ row }">
-        {{ formatTime(row.out_bill?.trade_time) }}
+        {{ formatDateTime(row.out_bill?.trade_time) }}
       </template>
     </el-table-column>
     <el-table-column label="转出账户" min-width="140" show-overflow-tooltip>
@@ -17,7 +17,7 @@
     </el-table-column>
     <el-table-column label="金额" width="100" align="right">
       <template #default="{ row }">
-        ¥{{ ((row.out_bill?.amount_cents || 0) / 100).toFixed(2) }}
+        <span class="amount-expense">{{ formatSignedYuan(row.out_bill?.amount_cents || 0, 'expense') }}</span>
       </template>
     </el-table-column>
     <el-table-column label="匹配度" width="140">
@@ -39,14 +39,11 @@
 </template>
 
 <script setup>
+import { formatDateTime, formatSignedYuan } from '@/utils/formatters'
+
 defineProps({
   candidates: { type: Array, default: () => [] },
 })
 
 defineEmits(['confirm', 'reject'])
-
-function formatTime(timeStr) {
-  if (!timeStr) return ''
-  return timeStr.slice(0, 16).replace('T', ' ')
-}
 </script>

@@ -2,10 +2,14 @@
   <el-dialog
     v-model="visible"
     :title="isEdit ? '编辑信用账户' : '新建信用账户'"
-    width="450px"
+    width="520px"
     :close-on-click-modal="false"
   >
-    <el-form ref="formRef" :model="form" label-width="110px">
+    <div class="dialog-subtitle">
+      {{ isEdit ? '更新信用账户名称、类型、归属与额度。' : '补充信用账户基础信息。' }}
+    </div>
+
+    <el-form ref="formRef" :model="form" label-width="110px" class="credit-form">
       <el-form-item label="账户名称" required>
         <el-input v-model="form.account_name" placeholder="如 花呗、京东白条" />
       </el-form-item>
@@ -34,7 +38,7 @@
       </el-form-item>
       <el-form-item label="信用额度">
         <el-input-number v-model="creditLimitYuan" :min="0" :step="100" placeholder="0" />
-        <span style="margin-left:8px;color:#909399">元</span>
+        <span class="unit-label">元</span>
       </el-form-item>
     </el-form>
 
@@ -125,3 +129,20 @@ async function handleSave() {
 
 defineExpose({ open })
 </script>
+
+<style scoped>
+.dialog-subtitle {
+  margin-bottom: var(--spacing-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
+.credit-form :deep(.el-input-number) {
+  width: 180px;
+}
+
+.unit-label {
+  margin-left: var(--spacing-sm);
+  color: var(--color-text-secondary);
+}
+</style>

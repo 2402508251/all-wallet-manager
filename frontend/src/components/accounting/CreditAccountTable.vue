@@ -1,20 +1,24 @@
 <template>
-  <el-table :data="accounts" style="width: 100%" size="small" empty-text="暂无信用账户">
+  <el-table :data="accounts" size="small" empty-text="暂无信用账户">
     <el-table-column prop="account_name" label="名称" min-width="120" />
     <el-table-column label="信用类型" width="110">
       <template #default="{ row }">
         <el-tag size="small">{{ creditTypeLabel(row.credit_type) }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="关联还款账户" min-width="140">
+    <el-table-column label="关联还款账户" min-width="140" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.linked_account_name || '未关联' }}
+        {{ row.linked_account_name || row.linked_account_id || '未关联' }}
       </template>
     </el-table-column>
-    <el-table-column prop="role_name" label="归属角色" width="120" />
+    <el-table-column prop="role_name" label="归属角色" width="120">
+      <template #default="{ row }">
+        {{ row.role_name || '-' }}
+      </template>
+    </el-table-column>
     <el-table-column label="额度" width="120" align="right">
       <template #default="{ row }">
-        ¥{{ ((row.credit_limit_cents || 0) / 100).toFixed(2) }}
+        {{ formatYuan(row.credit_limit_cents || 0) }}
       </template>
     </el-table-column>
     <el-table-column label="操作" width="120" fixed="right">
@@ -27,19 +31,11 @@
 </template>
 
 <script setup>
+import { creditTypeLabel, formatYuan } from '@/utils/formatters'
+
 defineProps({
   accounts: { type: Array, default: () => [] },
 })
 
 defineEmits(['edit', 'delete'])
-
-function creditTypeLabel(type) {
-  const map = {
-    huabei: '花呗',
-    baitiao: '白条',
-    fenfu: '分付',
-    ccb_credit: '建行信用卡',
-  }
-  return map[type] || type
-}
 </script>

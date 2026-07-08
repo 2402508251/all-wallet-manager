@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     title="解析结果"
-    width="450px"
+    width="520px"
     :close-on-click-modal="false"
   >
     <div v-if="result" class="parse-result">
@@ -10,8 +10,6 @@
         <el-icon :size="20" color="#67c23a"><SuccessFilled /></el-icon>
         <span class="result-label">解析完成</span>
       </div>
-
-      <el-divider />
 
       <div class="result-stats">
         <div class="stat-row">
@@ -74,15 +72,21 @@ defineExpose({ open })
 }
 
 .result-stats {
-  text-align: left;
-  padding: 0 var(--spacing-md);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
 }
 
 .stat-row {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--spacing-xs) 0;
+  display: grid;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-color-lighter);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card-subtle);
   font-size: var(--font-size-base);
+  text-align: left;
 }
 
 .stat-row span {

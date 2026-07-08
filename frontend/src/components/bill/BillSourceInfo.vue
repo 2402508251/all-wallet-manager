@@ -16,6 +16,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { channelLabel } from '@/utils/formatters'
 
 const props = defineProps({
   sourceBill: { type: Object, default: null },
@@ -33,10 +34,6 @@ const formattedJson = computed(() => {
   }
 })
 
-function channelLabel(ch) {
-  const map = { wechat: '微信', alipay: '支付宝', ccb: '建行' }
-  return map[ch] || ch
-}
 </script>
 
 <style scoped>
@@ -51,10 +48,11 @@ function channelLabel(ch) {
 }
 
 .json-viewer {
-  background: #f5f7fa;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-color-lighter);
   border-radius: var(--radius-base);
   padding: var(--spacing-md);
-  max-height: 300px;
+  max-height: 360px;
   overflow: auto;
 }
 

@@ -51,14 +51,12 @@
       </el-select>
 
       <el-select v-model="localFilter.trade_type" placeholder="交易类型" clearable size="default">
-        <el-option label="消费" value="consumption" />
-        <el-option label="信用消费" value="credit_consumption" />
-        <el-option label="转出" value="transfer_out" />
-        <el-option label="转入" value="transfer_in" />
-        <el-option label="还款" value="repayment" />
-        <el-option label="手续费" value="fee" />
-        <el-option label="镜像" value="mirror" />
-        <el-option label="退款" value="refund" />
+        <el-option
+          v-for="option in tradeTypeSelectOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
       </el-select>
 
       <el-select v-model="localFilter.assign_status" placeholder="分配状态" clearable size="default">
@@ -96,6 +94,7 @@
 import { reactive, ref, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
+import { tradeTypeSelectOptions } from '@/utils/formatters'
 
 const emit = defineEmits(['search', 'reset'])
 

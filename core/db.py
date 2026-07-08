@@ -127,14 +127,14 @@ class DatabaseManager:
 
     def _insert_default_category_match_fields(self, conn) -> None:
         fields = [
-            ('counterparty', '当前账单-交易对方', 'self', 'counterparty', 1, 1, 1),
-            ('product_desc', '当前账单-商品说明', 'self', 'product_desc', 1, 1, 2),
-            ('remark', '当前账单-备注', 'self', 'remark', 1, 1, 3),
-            ('all_text', '当前账单-全部文本', 'self', 'all_text', 1, 1, 4),
-            ('initiator_counterparty', '发起方-交易对方', 'initiator', 'counterparty', 1, 1, 5),
-            ('initiator_product_desc', '发起方-商品说明', 'initiator', 'product_desc', 1, 1, 6),
-            ('initiator_remark', '发起方-备注', 'initiator', 'remark', 1, 1, 7),
-            ('initiator_all_text', '发起方-全部文本', 'initiator', 'all_text', 1, 1, 8),
+            ('counterparty', '交易对方', 'self', 'counterparty', 1, 1, 1),
+            ('product_desc', '商品说明', 'self', 'product_desc', 1, 1, 2),
+            ('remark', '备注', 'self', 'remark', 1, 1, 3),
+            ('all_text', '全部文本', 'self', 'all_text', 1, 1, 4),
+            ('initiator_counterparty', '交易对方', 'initiator', 'counterparty', 1, 1, 5),
+            ('initiator_product_desc', '商品说明', 'initiator', 'product_desc', 1, 1, 6),
+            ('initiator_remark', '备注', 'initiator', 'remark', 1, 1, 7),
+            ('initiator_all_text', '全部文本', 'initiator', 'all_text', 1, 1, 8),
         ]
         conn.executemany(
             "INSERT OR IGNORE INTO category_match_fields (field_key, label, source_scope, field_expr, is_system, is_enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",

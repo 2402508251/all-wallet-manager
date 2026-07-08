@@ -68,7 +68,7 @@
       <el-table-column label="类型" width="80">
         <template #default="{ row }">
           <el-tag
-            v-if="row.trade_type && row.trade_type !== 'consumption'"
+            v-if="row.trade_type"
             size="small"
             :type="tradeTypeTag(row.trade_type)"
           >

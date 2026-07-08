@@ -1,11 +1,21 @@
 <template>
   <div class="transfer-pairer">
-    <h4>已自动配对 (强匹配) ({{ strongPairs.length }} 条)</h4>
+    <div class="action-bar">
+      <div>
+        <div class="section-title">已自动配对</div>
+        <div class="section-subtitle">强匹配 {{ strongPairs.length }} 条，基于备注或单号线索自动生成转账配对</div>
+      </div>
+    </div>
     <StrongPairTable :pairs="strongPairs" />
 
     <el-divider />
 
-    <h4>待确认配对 (弱匹配)</h4>
+    <div class="action-bar">
+      <div>
+        <div class="section-title">待确认配对</div>
+        <div class="section-subtitle">从未配对的转出记录中提取弱匹配候选，需要手动确认</div>
+      </div>
+    </div>
     <WeakPairTable
       :candidates="accountingStore.weakCandidates"
       @confirm="handleConfirmPair"
@@ -47,11 +57,3 @@ async function handleRejectPair({ outId, inId }) {
   }
 }
 </script>
-
-<style scoped>
-h4 {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  margin-bottom: var(--spacing-sm);
-}
-</style>

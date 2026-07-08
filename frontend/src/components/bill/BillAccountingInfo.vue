@@ -11,14 +11,14 @@
           {{ bill.is_credit ? '是' : '否' }}
         </el-tag>
       </el-descriptions-item>
-      <el-descriptions-item v-if="bill.credit_account_id" label="信用账户ID">
-        {{ bill.credit_account_id }}
+      <el-descriptions-item v-if="bill.credit_account_id" label="信用账户">
+        {{ bill.credit_account_name || `账户#${bill.credit_account_id}` }}
       </el-descriptions-item>
       <el-descriptions-item label="转账配对号">
-        {{ bill.transfer_link_id || '未配对' }}
+        <span class="long-text">{{ bill.transfer_link_id || '未配对' }}</span>
       </el-descriptions-item>
       <el-descriptions-item v-if="bill.merged_group_id" label="溯源组ID">
-        {{ bill.merged_group_id }}
+        <span class="long-text">{{ bill.merged_group_id }}</span>
       </el-descriptions-item>
       <el-descriptions-item label="分配状态">
         <el-tag size="small" :type="assignStatusType(bill.assign_status)">
@@ -85,5 +85,10 @@ function assignStatusType(status) {
 <style scoped>
 .accounting-info {
   padding: var(--spacing-sm);
+}
+
+.long-text {
+  font-size: 12px;
+  word-break: break-all;
 }
 </style>

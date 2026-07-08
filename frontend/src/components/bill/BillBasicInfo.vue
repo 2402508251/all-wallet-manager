@@ -5,7 +5,12 @@
         {{ formatTime(bill.trade_time) }}
       </el-descriptions-item>
       <el-descriptions-item label="交易类型">
-        <el-tag size="small">{{ tradeTypeLabel(bill.trade_type) }}</el-tag>
+        <el-tag size="small" :type="tradeTypeTag(bill.trade_type)">{{ tradeTypeLabel(bill.trade_type) }}</el-tag>
+      </el-descriptions-item>
+      <el-descriptions-item label="渠道">
+        <el-tag size="small" :type="channelTag(bill.channel)">
+          {{ channelLabel(bill.channel) }}
+        </el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="交易对方">
         {{ bill.counterparty || '-' }}
@@ -34,10 +39,24 @@
         {{ roleName }}
       </el-descriptions-item>
       <el-descriptions-item label="渠道交易单号">
-        <span style="font-size:12px;word-break:break-all">{{ bill.channel_trade_no }}</span>
+        <span class="long-text">{{ bill.channel_trade_no }}</span>
       </el-descriptions-item>
       <el-descriptions-item label="备注">
-        {{ bill.remark || '-' }}
+        <div class="remark-editor">
+          <el-input
+            v-model="remarkDraft"
+            type="textarea"
+            :rows="3"
+            resize="vertical"
+            maxlength="300"
+            show-word-limit
+            placeholder="填写备注信息"
+          />
+          <div class="remark-actions">
+            <el-button size="small" @click="resetRemark" :disabled="!remarkChanged">恢复原值</el-button>
+            <el-button type="primary" size="small" @click="saveRemark" :disabled="!remarkChanged">保存备注</el-button>
+          </div>
+        </div>
       </el-descriptions-item>
       <el-descriptions-item label="业务分类">
         <el-select
@@ -67,10 +86,19 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
+import {
+  channelLabel,
+  channelTag,
+  directionClass,
+  formatDateTime,
+  formatSignedYuan,
+  tradeTypeLabel,
+  tradeTypeTag,
+} from '@/utils/formatters'
 
 const props = defineProps({
   bill: { type: Object, default: null },
@@ -79,8 +107,15 @@ const props = defineProps({
 const emit = defineEmits(['update', 'delete'])
 
 const systemStore = useSystemStore()
+const remarkDraft = ref('')
 
 const categories = computed(() => systemStore.categories)
+const normalizedBillRemark = computed(() => String(props.bill?.remark || ''))
+const remarkChanged = computed(() => remarkDraft.value !== normalizedBillRemark.value)
+
+watch(() => props.bill, (bill) => {
+  remarkDraft.value = String(bill?.remark || '')
+}, { immediate: true })
 
 const accountName = computed(() => {
   if (!props.bill?.account_id) return '-'
@@ -101,43 +136,27 @@ const roleName = computed(() => {
   return role?.name || `角色#${props.bill.role_id}`
 })
 
-function tradeTypeLabel(type) {
-  const map = {
-    consumption: '消费',
-    refund: '退款',
-    transfer_out: '转出',
-    transfer_in: '转入',
-    repayment: '还款',
-    credit_consumption: '信用消费',
-    fee: '手续费',
-    mirror: '镜像',
-    topup: '充值',
-    withdrawal: '提现',
-    investment: '理财',
-    other: '其他',
-  }
-  return map[type] || type
-}
-
-function directionClass(dir) {
-  const map = { income: 'amount-income', expense: 'amount-expense', neutral: 'amount-neutral' }
-  return map[dir] || ''
-}
-
 function formatAmount(cents, direction) {
-  const yuan = (cents / 100).toFixed(2)
-  const prefix = direction === 'income' ? '+' : direction === 'expense' ? '-' : ''
-  return `${prefix}¥${yuan}`
+  return formatSignedYuan(cents, direction)
 }
 
 function formatTime(timeStr) {
-  if (!timeStr) return ''
-  return timeStr.slice(0, 19).replace('T', ' ')
+  return formatDateTime(timeStr)
 }
 
 function handleCategoryChange(categoryId) {
   emit('update', { category_id: categoryId })
   ElMessage.success('分类已更新')
+}
+
+function resetRemark() {
+  remarkDraft.value = normalizedBillRemark.value
+}
+
+function saveRemark() {
+  if (!remarkChanged.value) return
+  emit('update', { remark: remarkDraft.value.trim() })
+  ElMessage.success('备注已更新')
 }
 
 function handleDelete() {
@@ -160,5 +179,21 @@ function handleDelete() {
   margin-top: var(--spacing-md);
   display: flex;
   justify-content: flex-end;
+}
+
+.remark-editor {
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.remark-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.long-text {
+  font-size: 12px;
+  word-break: break-all;
 }
 </style>

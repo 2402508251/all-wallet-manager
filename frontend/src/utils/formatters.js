@@ -12,14 +12,30 @@ export const directionOptions = {
 }
 
 export const tradeTypeOptions = {
-  consumption: { label: '消费', tag: '' },
-  credit_consumption: { label: '信用', tag: 'warning' },
+  consumption: { label: '消费', tag: 'info' },
+  credit_consumption: { label: '信用消费', tag: 'warning' },
+  refund: { label: '退款', tag: 'success' },
   transfer_out: { label: '转出', tag: '' },
   transfer_in: { label: '转入', tag: 'success' },
   repayment: { label: '还款', tag: 'info' },
+  repayment_mirror: { label: '还款镜像', tag: 'info' },
   fee: { label: '手续费', tag: 'danger' },
-  mirror: { label: '镜像', tag: 'info' },
-  refund: { label: '退款', tag: 'success' },
+  topup: { label: '充值', tag: 'primary' },
+  withdrawal: { label: '提现', tag: 'warning' },
+  investment: { label: '理财', tag: 'success' },
+  other: { label: '其他', tag: 'info' },
+}
+
+export const tradeTypeSelectOptions = Object.entries(tradeTypeOptions).map(([value, meta]) => ({
+  value,
+  label: meta.label,
+}))
+
+export const creditTypeOptions = {
+  huabei: '花呗',
+  baitiao: '白条',
+  fenfu: '分付',
+  ccb_credit: '建行信用卡',
 }
 
 export const collectionStatusOptions = {
@@ -70,6 +86,10 @@ export function tradeTypeLabel(type) {
 
 export function tradeTypeTag(type) {
   return tradeTypeOptions[type]?.tag || 'info'
+}
+
+export function creditTypeLabel(type) {
+  return creditTypeOptions[type] || type || '-'
 }
 
 export function collectionStatusLabel(status) {
