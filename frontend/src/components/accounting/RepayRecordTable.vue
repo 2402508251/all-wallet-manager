@@ -20,9 +20,9 @@
         {{ row.credit_account_name || '-' }}
       </template>
     </el-table-column>
-    <el-table-column label="关联消费数" width="100">
+    <el-table-column label="镜像状态" width="100">
       <template #default="{ row }">
-        {{ row.transfer_link_id ? '已关联' : '未关联' }}
+        {{ row.transfer_link_id ? '已生成' : '未生成' }}
       </template>
     </el-table-column>
   </el-table>

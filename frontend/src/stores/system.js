@@ -245,5 +245,9 @@ export const useSystemStore = defineStore('system', {
     async cleanupSnapshots(keepCount) {
       return await call('cleanup_snapshots', { keep_count: keepCount })
     },
+
+    async resetApplication(options) {
+      return await call('reset_application', options)
+    },
   },
 })

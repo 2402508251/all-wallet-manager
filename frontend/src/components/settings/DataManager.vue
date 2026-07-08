@@ -9,6 +9,9 @@
     <!-- 数据清理 -->
     <CleanupPanel @done="refreshSnapshots" />
 
+    <!-- 重置应用 -->
+    <ResetApplicationPanel @done="refreshSnapshots" />
+
     <!-- 快照列表 -->
     <SnapshotList ref="snapshotRef" @restored="refreshSnapshots" />
   </div>
@@ -20,6 +23,7 @@ import { useSystemStore } from '@/stores/system'
 import ReparsePanel from './ReparsePanel.vue'
 import RecategorizePanel from './RecategorizePanel.vue'
 import CleanupPanel from './CleanupPanel.vue'
+import ResetApplicationPanel from './ResetApplicationPanel.vue'
 import SnapshotList from './SnapshotList.vue'
 
 const systemStore = useSystemStore()

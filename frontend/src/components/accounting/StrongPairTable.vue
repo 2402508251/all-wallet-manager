@@ -2,22 +2,27 @@
   <el-table :data="pairs" style="width: 100%" size="small" empty-text="暂无自动配对记录">
     <el-table-column label="转出时间" width="140">
       <template #default="{ row }">
-        {{ formatTime(row.trade_time) }}
+        {{ formatTime(row.out_trade_time) }}
       </template>
     </el-table-column>
-    <el-table-column label="转入" min-width="140" show-overflow-tooltip>
+    <el-table-column label="转出账户" min-width="140" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.counterparty || '-' }}
+        {{ row.out_counterparty || '-' }}
+      </template>
+    </el-table-column>
+    <el-table-column label="转入账户" min-width="140" show-overflow-tooltip>
+      <template #default="{ row }">
+        {{ row.in_counterparty || '-' }}
       </template>
     </el-table-column>
     <el-table-column label="金额" width="100" align="right">
       <template #default="{ row }">
-        ¥{{ (row.amount_cents / 100).toFixed(2) }}
+        ¥{{ (row.out_amount_cents / 100).toFixed(2) }}
       </template>
     </el-table-column>
     <el-table-column label="配对依据" width="150">
       <template #default="{ row }">
-        <el-tag size="small" type="success">备注单号一致</el-tag>
+        <el-tag size="small" type="success">{{ row.transfer_link_id ? '自动配对成功' : '已确认' }}</el-tag>
       </template>
     </el-table-column>
   </el-table>

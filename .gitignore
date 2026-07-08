@@ -23,6 +23,7 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.db.bak
+data/*.db.*.bak
 *.db.bak
 data/temp/
 
@@ -45,7 +46,9 @@ test_upload.py
 scripts/test_*.py
 
 # Debug / maintenance scripts (one-off, not part of the app)
-scripts/
+scripts/*
+!scripts/init_db.sql
+!scripts/rebuild_database.py
 
 # Claude Code assistant
 .claude/

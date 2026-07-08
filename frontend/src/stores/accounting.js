@@ -29,51 +29,35 @@ export const useAccountingStore = defineStore('accounting', {
       this.creditAccounts = data.list
     },
 
-    async updateCreditAccount(id, fields) {
-      await call('update_account', { account_id: id, ...fields })
+    async createCreditAccount(fields) {
+      await call('create_credit_account', fields)
       await this.loadCreditAccounts()
     },
 
-    async loadCreditRecords(month, familyId) {
-      const [year, m] = month.split('-').map(Number)
-      const startTime = `${month}-01T00:00:00+08:00`
-      const nextMonth = m === 12 ? 1 : m + 1
-      const nextYear = m === 12 ? year + 1 : year
-      const endTime = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00+08:00`
+    async updateCreditAccount(id, fields) {
+      await call('update_credit_account', { credit_account_id: id, ...fields })
+      await this.loadCreditAccounts()
+    },
 
-      const filters = {
-        trade_type: 'credit_consumption',
-        start_time: startTime,
-        end_time: endTime,
-      }
-      if (familyId) filters.family_id = familyId
+    async deleteCreditAccount(id) {
+      await call('delete_credit_account', { credit_account_id: id })
+      await this.loadCreditAccounts()
+    },
 
-      const data = await call('query_bills', {
-        filters,
-        page: 1,
-        page_size: 100,
+    async loadCreditRecords(month, familyId, roleId) {
+      const data = await call('get_credit_records', {
+        month,
+        family_id: familyId,
+        role_id: roleId,
       })
       this.creditRecords = data.list
     },
 
-    async loadRepayRecords(month, familyId) {
-      const [year, m] = month.split('-').map(Number)
-      const startTime = `${month}-01T00:00:00+08:00`
-      const nextMonth = m === 12 ? 1 : m + 1
-      const nextYear = m === 12 ? year + 1 : year
-      const endTime = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00+08:00`
-
-      const filters = {
-        trade_type: 'repayment',
-        start_time: startTime,
-        end_time: endTime,
-      }
-      if (familyId) filters.family_id = familyId
-
-      const data = await call('query_bills', {
-        filters,
-        page: 1,
-        page_size: 100,
+    async loadRepayRecords(month, familyId, roleId) {
+      const data = await call('get_repayment_records', {
+        month,
+        family_id: familyId,
+        role_id: roleId,
       })
       this.repayRecords = data.list
     },
@@ -120,25 +104,14 @@ export const useAccountingStore = defineStore('accounting', {
 
     // ─── 转账配对 ─────────────────────────
     async loadStrongPairs() {
-      // 查询有 transfer_link_id 的记录
-      const data = await call('query_bills', {
-        filters: { trade_type: 'transfer_out' },
-        page: 1,
-        page_size: 200,
-      })
-      // 筛选有 transfer_link_id 的记录
-      this.strongPairs = data.list.filter(b => b.transfer_link_id)
+      const data = await call('get_transfer_strong_pairs', {})
+      this.strongPairs = data.list || []
     },
 
-    async loadWeakCandidates(page, pageSize) {
-      const data = await call('query_bills', {
-        filters: { trade_type: 'transfer_out' },
-        page: page || 1,
-        page_size: pageSize || 20,
-      })
-      // 筛选没有 transfer_link_id 的记录
-      this.weakCandidates = data.list.filter(b => !b.transfer_link_id)
-      this.weakTotal = this.weakCandidates.length
+    async loadWeakCandidates() {
+      const data = await call('get_transfer_weak_candidates', {})
+      this.weakCandidates = data.list || []
+      this.weakTotal = data.total || this.weakCandidates.length
     },
 
     async confirmTransferPair(outId, inId) {
@@ -151,9 +124,9 @@ export const useAccountingStore = defineStore('accounting', {
       return data
     },
 
-    async rejectTransferPair(candidateId) {
-      await call('reject_transfer_pair', { candidate_id: candidateId })
-      this.weakCandidates = this.weakCandidates.filter(c => c.id !== candidateId)
+    async rejectTransferPair(outId, inId) {
+      await call('reject_transfer_pair', { out_id: outId, in_id: inId })
+      this.weakCandidates = this.weakCandidates.filter(c => !(c.out_bill_id === outId && c.in_bill_id === inId))
     },
 
     async getWeakMatchCandidates(billId) {

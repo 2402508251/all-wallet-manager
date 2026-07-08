@@ -15,20 +15,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAccountingStore } from '@/stores/accounting'
 import StrongPairTable from './StrongPairTable.vue'
 import WeakPairTable from './WeakPairTable.vue'
 
 const accountingStore = useAccountingStore()
-
-const strongPairs = ref([])
+const strongPairs = computed(() => accountingStore.strongPairs)
 
 onMounted(() => {
-  accountingStore.loadStrongPairs().then(() => {
-    strongPairs.value = accountingStore.strongPairs
-  })
+  accountingStore.loadStrongPairs()
   accountingStore.loadWeakCandidates()
 })
 
@@ -41,9 +38,9 @@ async function handleConfirmPair({ outId, inId }) {
   }
 }
 
-async function handleRejectPair(candidateId) {
+async function handleRejectPair({ outId, inId }) {
   try {
-    await accountingStore.rejectTransferPair(candidateId)
+    await accountingStore.rejectTransferPair(outId, inId)
     ElMessage.success('已拒绝配对')
   } catch (e) {
     ElMessage.error(e.message)

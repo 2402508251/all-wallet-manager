@@ -21,6 +21,7 @@ class DateTimeEncoder(json.JSONEncoder):
 from core.db import DatabaseManager
 from core.config_manager import ConfigManager
 from core.dal import DAL
+from core.db_rebuild import rebuild_database
 from core.snapshot import SnapshotEngine
 from core.crypto_utils import CredentialEncryptor
 
@@ -51,6 +52,109 @@ class ApiBridge:
 
     def _now(self) -> str:
         return datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+
+    def _ensure_bill_accounting_row(self, bill_id: int, data=None) -> dict:
+        existing = self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,))
+        payload = {'merge_status': 'normal'}
+        if data:
+            payload.update(data)
+        if existing:
+            self.dal.update('bill_accounting', payload, 'bill_id = ?', (bill_id,))
+        else:
+            payload['bill_id'] = bill_id
+            self.dal.insert('bill_accounting', payload)
+        return self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)) or {}
+
+    def _apply_accounting_pipeline(self, bill: dict, now: str | None = None) -> dict:
+        now = now or self._now()
+        bill_id = bill.get('id')
+        if not bill_id:
+            return {'post_actions': []}
+
+        self._ensure_bill_accounting_row(bill_id, {'created_at': now})
+        existing_accounting = self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)) or {}
+        post_actions = []
+
+        from modules.accounting.credit_tracker import CreditTracker
+        credit_tracker = CreditTracker(self.dal)
+        credit_result = credit_tracker.identify_credit(bill)
+        if credit_result:
+            unified_updates = {}
+            if credit_result.get('trade_type') and bill.get('trade_type') != credit_result['trade_type']:
+                unified_updates['trade_type'] = credit_result['trade_type']
+                bill['trade_type'] = credit_result['trade_type']
+            if unified_updates:
+                unified_updates['updated_at'] = now
+                self.dal.update('unified_bills', unified_updates, 'id = ?', (bill_id,))
+            self._ensure_bill_accounting_row(bill_id, {
+                'is_credit': 1,
+                'credit_account_id': credit_result.get('credit_account_id'),
+            })
+            bill['is_credit'] = True
+            bill['credit_account_id'] = credit_result.get('credit_account_id')
+            post_actions.append('credit_identified')
+
+        if bill.get('trade_type') == 'repayment':
+            repayment_link = None
+            if existing_accounting.get('transfer_link_id') and existing_accounting.get('credit_account_id'):
+                repayment_link = {
+                    'credit_account_id': existing_accounting.get('credit_account_id'),
+                    'transfer_link_id': existing_accounting.get('transfer_link_id'),
+                    'is_credit': 0,
+                }
+            else:
+                repayment_link = credit_tracker.link_repayment(bill)
+            if repayment_link:
+                self._ensure_bill_accounting_row(bill_id, repayment_link)
+                bill.update(repayment_link)
+                mirror_trade_no = f"MIRROR_{bill.get('channel_trade_no', '')}"
+                existing_mirror = self.dal.fetch_one(
+                    "SELECT id FROM unified_bills WHERE channel = ? AND channel_trade_no = ?",
+                    (bill.get('channel', ''), mirror_trade_no),
+                )
+                if not existing_mirror:
+                    mirror = credit_tracker.generate_mirror_record({**bill, **repayment_link})
+                    mirror['created_at'] = now
+                    mirror['updated_at'] = now
+                    mirror_id = self.dal.insert('unified_bills', mirror)
+                    self._ensure_bill_accounting_row(mirror_id, {
+                        'transfer_link_id': repayment_link.get('transfer_link_id'),
+                        'credit_account_id': repayment_link.get('credit_account_id'),
+                        'is_credit': 0,
+                        'created_at': now,
+                    })
+                post_actions.append('repayment_mirror_created')
+
+        merge_result = None
+        if bill.get('channel') in ('wechat', 'alipay'):
+            from modules.accounting.cross_platform_merger import CrossPlatformMerger
+            merger = CrossPlatformMerger(self.dal)
+            merge_result = merger.mark_orphan(dict(bill)) or {}
+            if merge_result.get('merged'):
+                post_actions.append('auto_merged_source')
+            elif merge_result.get('orphan'):
+                post_actions.append('mark_orphan')
+        elif bill.get('channel') == 'ccb':
+            from modules.accounting.cross_platform_merger import CrossPlatformMerger
+            merger = CrossPlatformMerger(self.dal)
+            merge_result = merger.try_merge(dict(bill)) or {}
+            if merge_result.get('merged'):
+                post_actions.append('auto_merged_target')
+
+        if bill.get('trade_type') in ('transfer_out', 'transfer_in'):
+            accounting = self.dal.fetch_one(
+                "SELECT transfer_link_id FROM bill_accounting WHERE bill_id = ?", (bill_id,)
+            )
+            if not accounting or not accounting.get('transfer_link_id'):
+                from modules.accounting.transfer_pairer import TransferPairer
+                pairer = TransferPairer(self.dal)
+                transfer_result = pairer.auto_pair_strong(dict(bill))
+                if transfer_result and transfer_result.get('transfer_link_id'):
+                    post_actions.append('auto_transfer_paired')
+
+        if not post_actions:
+            post_actions.append('normal_only')
+        return {'post_actions': post_actions}
 
     def ensure_default_family_and_role(self) -> dict:
         if self._default_ids is not None:
@@ -387,26 +491,8 @@ class ApiBridge:
                             'created_at': now,
                         })
 
-                    post_action = 'normal_only'
-                    if rec['channel'] in ('wechat', 'alipay'):
-                        from modules.accounting.cross_platform_merger import CrossPlatformMerger
-                        merger = CrossPlatformMerger(self.dal)
-                        merge_result = merger.mark_orphan(imported_bill) or {}
-                        post_action = 'mark_orphan'
-                        if merge_result.get('merged'):
-                            post_action = 'auto_merged_source'
-                    else:
-                        self.dal.insert('bill_accounting', {
-                            'bill_id': bill_id,
-                            'merge_status': 'normal',
-                            'created_at': now,
-                        })
-                        if rec['channel'] == 'ccb':
-                            from modules.accounting.cross_platform_merger import CrossPlatformMerger
-                            merger = CrossPlatformMerger(self.dal)
-                            merge_result = merger.try_merge(imported_bill)
-                            if merge_result and merge_result.get('merged'):
-                                post_action = 'auto_merged_target'
+                    pipeline_result = self._apply_accounting_pipeline(imported_bill, now)
+                    post_action = ','.join(pipeline_result.get('post_actions', ['normal_only']))
 
                     logger.info(
                         "parse_collection post_action=%s bill_id=%s channel=%s batch_id=%s",
@@ -620,9 +706,11 @@ class ApiBridge:
 
         rows = self.dal.fetch_all(
             f"SELECT ub.*, ba.merge_status, ba.transfer_link_id, ba.is_credit, "
+            f"ba.credit_account_id, ca.account_name AS credit_account_name, "
             f"bc.name as category_name "
             f"FROM unified_bills ub "
             f"LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            f"LEFT JOIN credit_accounts ca ON ba.credit_account_id = ca.id "
             f"LEFT JOIN bill_categories bc ON ub.category_id = bc.id "
             f"WHERE {where} ORDER BY ub.trade_time DESC LIMIT ? OFFSET ?",
             tuple(sql_params) + (page_size, offset),
@@ -634,9 +722,11 @@ class ApiBridge:
         bill_id = (params or {}).get('bill_id')
         bill = self.dal.fetch_one(
             "SELECT ub.*, ba.merge_status, ba.transfer_link_id, "
-            "ba.is_credit, ba.credit_account_id, ba.merged_group_id, ba.real_payer_account_id "
+            "ba.is_credit, ba.credit_account_id, ca.account_name AS credit_account_name, "
+            "ba.merged_group_id, ba.real_payer_account_id "
             "FROM unified_bills ub "
             "LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            "LEFT JOIN credit_accounts ca ON ba.credit_account_id = ca.id "
             "WHERE ub.id = ?",
             (bill_id,),
         )
@@ -806,27 +896,159 @@ class ApiBridge:
         candidates = pairer.auto_pair_weak_candidates(dict(bill))
         return self.ok({'candidates': candidates})
 
+    def get_transfer_strong_pairs(self, params=None) -> dict:
+        rows = self.dal.fetch_all(
+            "SELECT ba.transfer_link_id, "
+            "out_b.id AS out_bill_id, out_b.trade_time AS out_trade_time, out_b.amount_cents AS out_amount_cents, "
+            "out_b.counterparty AS out_counterparty, out_b.channel AS out_channel, out_b.remark AS out_remark, "
+            "in_b.id AS in_bill_id, in_b.trade_time AS in_trade_time, in_b.amount_cents AS in_amount_cents, "
+            "in_b.counterparty AS in_counterparty, in_b.channel AS in_channel, in_b.remark AS in_remark "
+            "FROM bill_accounting ba "
+            "JOIN unified_bills out_b ON ba.bill_id = out_b.id AND out_b.direction = 'expense' "
+            "JOIN bill_accounting ba2 ON ba.transfer_link_id = ba2.transfer_link_id "
+            "JOIN unified_bills in_b ON ba2.bill_id = in_b.id AND in_b.direction = 'income' "
+            "WHERE ba.transfer_link_id IS NOT NULL AND ba.transfer_link_id != '' "
+            "AND out_b.trade_type = 'transfer_out' "
+            "AND in_b.trade_type = 'transfer_in' "
+            "GROUP BY ba.transfer_link_id "
+            "ORDER BY out_b.trade_time DESC"
+        )
+        return self.ok({'list': [dict(r) for r in rows]})
+
+    def get_transfer_weak_candidates(self, params=None) -> dict:
+        rows = self.dal.fetch_all(
+            "SELECT ub.* FROM unified_bills ub "
+            "JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            "WHERE ub.trade_type = 'transfer_out' AND ub.is_deleted = 0 "
+            "AND (ba.transfer_link_id IS NULL OR ba.transfer_link_id = '') "
+            "ORDER BY ub.trade_time DESC"
+        )
+        from modules.accounting.transfer_pairer import TransferPairer
+        pairer = TransferPairer(self.dal)
+        candidates = []
+        for row in rows:
+            candidates.extend(pairer.auto_pair_weak_candidates(dict(row)))
+        return self.ok({'list': candidates, 'total': len(candidates)})
+
     def confirm_transfer_pair(self, params=None) -> dict:
         p = params or {}
         out_id = p.get('out_id')
         in_id = p.get('in_id')
+        if not out_id or not in_id:
+            return self.err('缺少配对账单')
         from modules.accounting.transfer_pairer import TransferPairer
         pairer = TransferPairer(self.dal)
         result = pairer.confirm_pair(out_id, in_id)
         return self.ok(result)
 
     def reject_transfer_pair(self, params=None) -> dict:
-        return self.ok()
+        p = params or {}
+        out_id = p.get('out_id')
+        in_id = p.get('in_id')
+        if not out_id or not in_id:
+            return self.err('缺少配对账单')
+        from modules.accounting.transfer_pairer import TransferPairer
+        pairer = TransferPairer(self.dal)
+        return self.ok(pairer.reject_pair(out_id, in_id))
 
     def get_credit_accounts(self, params=None) -> dict:
-        rows = self.dal.fetch_all("SELECT * FROM credit_accounts")
+        rows = self.dal.fetch_all(
+            "SELECT ca.*, r.name AS role_name, a.account_name AS linked_account_name "
+            "FROM credit_accounts ca "
+            "LEFT JOIN roles r ON ca.role_id = r.id "
+            "LEFT JOIN accounts a ON ca.linked_account_id = a.id "
+            "ORDER BY ca.id DESC"
+        )
         return self.ok({'list': [dict(r) for r in rows]})
+
+    def create_credit_account(self, params=None) -> dict:
+        p = params or {}
+        account_name = (p.get('account_name') or '').strip()
+        credit_type = (p.get('credit_type') or '').strip()
+        role_id = p.get('role_id')
+        if not account_name or not credit_type:
+            return self.err('请填写账户名称和信用类型')
+        if not role_id:
+            return self.err('请选择归属角色')
+        credit_account_id = self.dal.insert('credit_accounts', {
+            'account_name': account_name,
+            'credit_type': credit_type,
+            'role_id': role_id,
+            'linked_account_id': p.get('linked_account_id'),
+            'credit_limit_cents': p.get('credit_limit_cents', 0) or 0,
+        })
+        return self.ok({'credit_account_id': credit_account_id})
+
+    def update_credit_account(self, params=None) -> dict:
+        p = params or {}
+        credit_account_id = p.get('credit_account_id')
+        current = self.dal.fetch_one("SELECT id FROM credit_accounts WHERE id = ?", (credit_account_id,))
+        if not current:
+            return self.err('信用账户不存在')
+        data = {}
+        for key in ('account_name', 'credit_type', 'role_id', 'linked_account_id', 'credit_limit_cents'):
+            if key in p:
+                data[key] = p.get(key)
+        if not data:
+            return self.ok()
+        self.dal.update('credit_accounts', data, 'id = ?', (credit_account_id,))
+        return self.ok()
+
+    def delete_credit_account(self, params=None) -> dict:
+        credit_account_id = (params or {}).get('credit_account_id')
+        ref = self.dal.fetch_one(
+            "SELECT id FROM bill_accounting WHERE credit_account_id = ? LIMIT 1", (credit_account_id,)
+        )
+        if ref:
+            return self.err('信用账户已被账务记录引用，不能删除')
+        deleted = self.dal.delete('credit_accounts', 'id = ?', (credit_account_id,))
+        return self.ok() if deleted else self.err('信用账户不存在')
+
+    def get_credit_records(self, params=None) -> dict:
+        p = params or {}
+        rows = self._query_credit_like_records('credit_consumption', p)
+        return self.ok({'list': rows})
+
+    def get_repayment_records(self, params=None) -> dict:
+        p = params or {}
+        rows = self._query_credit_like_records('repayment', p)
+        return self.ok({'list': rows})
 
     def toggle_hide_repayment_transfer(self, params=None) -> dict:
         hide = (params or {}).get('hide', False)
         return self.ok({'hide': hide})
 
     # ─── 6.2.6 统计报表 ────────────────────────────
+
+    def _query_credit_like_records(self, trade_type: str, params=None) -> list[dict]:
+        p = params or {}
+        month = p.get('month')
+        family_id = p.get('family_id')
+        role_id = p.get('role_id')
+        conditions = ["ub.is_deleted = 0", "ub.trade_type = ?"]
+        sql_params = [trade_type]
+        if month:
+            year, month_num = [int(v) for v in str(month).split('-')]
+            start = f"{year}-{month_num:02d}-01T00:00:00+08:00"
+            if month_num == 12:
+                end = f"{year + 1}-01-01T00:00:00+08:00"
+            else:
+                end = f"{year}-{month_num + 1:02d}-01T00:00:00+08:00"
+            conditions.extend(["ub.trade_time >= ?", "ub.trade_time < ?"])
+            sql_params.extend([start, end])
+        self._append_report_scope_filters(conditions, sql_params, family_id, role_id)
+        where = " AND ".join(conditions)
+        rows = self.dal.fetch_all(
+            "SELECT ub.*, ba.transfer_link_id, ba.is_credit, ba.credit_account_id, "
+            "ca.account_name AS credit_account_name, a.account_name AS linked_account_name "
+            "FROM unified_bills ub "
+            "LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
+            "LEFT JOIN credit_accounts ca ON ba.credit_account_id = ca.id "
+            "LEFT JOIN accounts a ON ca.linked_account_id = a.id "
+            f"WHERE {where} ORDER BY ub.trade_time DESC",
+            tuple(sql_params),
+        )
+        return [dict(r) for r in rows]
 
     def _append_report_scope_filters(self, conditions: list, sql_params: list, family_id=None, role_id=None) -> None:
         if family_id:
@@ -838,12 +1060,19 @@ class ApiBridge:
             conditions.append("ub.role_id = ?")
             sql_params.append(role_id)
 
+    def _append_internal_flow_filters(self, conditions: list, hide_internal: bool) -> None:
+        if hide_internal:
+            conditions.append(
+                "ub.trade_type NOT IN ('transfer_out', 'transfer_in', 'repayment', 'repayment_mirror')"
+            )
+
     def get_monthly_summary(self, params=None) -> dict:
         p = params or {}
         year = p.get('year')
         month = p.get('month')
         family_id = p.get('family_id')
         role_id = p.get('role_id')
+        hide_internal = bool(p.get('hide_internal', False))
         start = f"{year}-{month:02d}-01T00:00:00+08:00"
         if month == 12:
             end = f"{year + 1}-01-01T00:00:00+08:00"
@@ -856,16 +1085,19 @@ class ApiBridge:
         self._append_report_scope_filters(conditions, sql_params, family_id, role_id)
 
         where = " AND ".join(conditions)
+        scoped_conditions = list(conditions)
+        self._append_internal_flow_filters(scoped_conditions, hide_internal)
+        scoped_where = " AND ".join(scoped_conditions)
 
         income = self.dal.fetch_one(
             f"SELECT COALESCE(SUM(ub.amount_cents), 0) as total {base_query} "
-            f"WHERE {where} AND ub.direction = 'income'",
+            f"WHERE {scoped_where} AND ub.direction = 'income'",
             tuple(sql_params),
         )['total']
 
         expense = self.dal.fetch_one(
             f"SELECT COALESCE(SUM(ub.amount_cents), 0) as total {base_query} "
-            f"WHERE {where} AND ub.direction = 'expense' AND ub.trade_type != 'credit_consumption'",
+            f"WHERE {scoped_where} AND ub.direction = 'expense' AND ub.trade_type != 'credit_consumption'",
             tuple(sql_params),
         )['total']
 
@@ -895,6 +1127,7 @@ class ApiBridge:
         family_id = p.get('family_id')
         role_id = p.get('role_id')
         direction = p.get('direction', 'expense')
+        hide_internal = bool(p.get('hide_internal', False))
         start = f"{year}-{month:02d}-01T00:00:00+08:00"
         if month == 12:
             end = f"{year + 1}-01-01T00:00:00+08:00"
@@ -907,6 +1140,7 @@ class ApiBridge:
         ]
         sql_params = [start, end, direction]
         self._append_report_scope_filters(conditions, sql_params, family_id, role_id)
+        self._append_internal_flow_filters(conditions, hide_internal)
 
         where = " AND ".join(conditions)
 
@@ -928,6 +1162,7 @@ class ApiBridge:
         end_month = p.get('end_month')
         family_id = p.get('family_id')
         role_id = p.get('role_id')
+        hide_internal = bool(p.get('hide_internal', False))
         months = []
         income_list = []
         expense_list = []
@@ -945,6 +1180,7 @@ class ApiBridge:
                 'month': current.month,
                 'family_id': family_id,
                 'role_id': role_id,
+                'hide_internal': hide_internal,
             })
             data = summary.get('data', {})
             income_list.append(data.get('income', 0))
@@ -1572,6 +1808,36 @@ class ApiBridge:
         keep_count = (params or {}).get('keep_count', 50)
         deleted = self.snapshot.cleanup_old_snapshots(keep_count)
         return self.ok({'deleted_count': deleted})
+
+    def reset_application(self, params=None) -> dict:
+        p = params or {}
+        if p.get('confirm_text') != 'RESET':
+            return self.err('确认文本不正确')
+
+        backup = p.get('backup', True)
+        db_path = self.db.db_path
+        try:
+            with self.db._lock:
+                self.db.close()
+                result = rebuild_database(db_path, backup=backup)
+                self.db.initialize()
+                self.dal = DAL(self.db)
+                self.snapshot = SnapshotEngine(self.db, dal=self.dal)
+                self._account_cache.clear()
+                self._default_ids = None
+            return self.ok({
+                'message': '应用已重置',
+                'db_path': result.get('db_path'),
+                'backup_path': result.get('backup_path'),
+            })
+        except Exception as e:
+            try:
+                self.db.initialize()
+                self.dal = DAL(self.db)
+                self.snapshot = SnapshotEngine(self.db, dal=self.dal)
+            except Exception:
+                logger.exception("failed to reinitialize database after reset failure")
+            return self.err(f'重置失败: {e}')
 
     # ─── 6.2.9 账单删除 ────────────────────────────
 

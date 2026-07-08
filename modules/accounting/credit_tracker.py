@@ -7,24 +7,39 @@ from core.dal import DAL
 
 
 class CreditTracker:
-    CREDIT_KEYWORDS = ['花呗', '白条', '分付', '信用购', '分期']
+    CREDIT_KEYWORDS = ['花呗', '白条', '分付', '信用购', '分期', '信用卡']
 
     def __init__(self, dal: DAL):
         self.dal = dal
 
     def identify_credit(self, record: dict) -> dict | None:
-        payment_method = record.get('payment_method', '')
-        if not payment_method:
+        payment_method = record.get('payment_method', '') or ''
+        trade_type = record.get('trade_type', '') or ''
+        if trade_type in ('repayment', 'repayment_mirror'):
             return None
+        search_fields = [
+            payment_method,
+            record.get('counterparty', '') or '',
+            record.get('product_desc', '') or '',
+            record.get('remark', '') or '',
+        ]
 
-        is_credit = any(kw in payment_method for kw in self.CREDIT_KEYWORDS)
+        is_credit = trade_type == 'credit_consumption' or any(
+            any(kw in field for kw in self.CREDIT_KEYWORDS) for field in search_fields if field
+        )
         if not is_credit:
             return None
 
-        credit_account = self.dal.fetch_one(
-            "SELECT * FROM credit_accounts WHERE account_name LIKE ?",
-            (f'%{payment_method}%',),
-        )
+        credit_account = None
+        for field in search_fields:
+            if not field:
+                continue
+            credit_account = self.dal.fetch_one(
+                "SELECT * FROM credit_accounts WHERE account_name LIKE ?",
+                (f'%{field}%',),
+            )
+            if credit_account:
+                break
 
         return {
             'is_credit': True,
@@ -94,7 +109,11 @@ class CreditTracker:
                     mirror['role_id'] = None
                     mirror['assign_status'] = 'pending'
 
-        for key in ('id', 'created_at', 'updated_at'):
+        for key in (
+            'id', 'created_at', 'updated_at', 'transfer_link_id', 'credit_account_id',
+            'is_credit', 'merge_status', 'merged_group_id', 'real_payer_account_id',
+            'credit_account_name', 'linked_account_name',
+        ):
             if key in mirror:
                 del mirror[key]
 

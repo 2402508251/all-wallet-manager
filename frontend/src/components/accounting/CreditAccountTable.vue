@@ -8,17 +8,19 @@
     </el-table-column>
     <el-table-column label="关联还款账户" min-width="140">
       <template #default="{ row }">
-        {{ row.linked_account_id || '未关联' }}
+        {{ row.linked_account_name || '未关联' }}
       </template>
     </el-table-column>
+    <el-table-column prop="role_name" label="归属角色" width="120" />
     <el-table-column label="额度" width="120" align="right">
       <template #default="{ row }">
         ¥{{ ((row.credit_limit_cents || 0) / 100).toFixed(2) }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" fixed="right">
+    <el-table-column label="操作" width="120" fixed="right">
       <template #default="{ row }">
         <el-button link type="primary" size="small" @click="$emit('edit', row)">编辑</el-button>
+        <el-button link type="danger" size="small" @click="$emit('delete', row)">删除</el-button>
       </template>
     </el-table-column>
   </el-table>
@@ -29,7 +31,7 @@ defineProps({
   accounts: { type: Array, default: () => [] },
 })
 
-defineEmits(['edit'])
+defineEmits(['edit', 'delete'])
 
 function creditTypeLabel(type) {
   const map = {

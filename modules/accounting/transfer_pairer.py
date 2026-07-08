@@ -83,6 +83,8 @@ class TransferPairer:
         )
 
         for candidate in candidates:
+            if self._is_rejected_pair(bill_id, candidate['id']):
+                continue
             candidate_no = candidate['channel_trade_no'] or ''
             candidate_remark = candidate['remark'] or ''
             candidate_text = f"{candidate_no} {candidate_remark}"
@@ -125,6 +127,8 @@ class TransferPairer:
         )
 
         for candidate in candidates:
+            if self._is_rejected_pair(bill_id, candidate['id']):
+                continue
             c = dict(candidate)
             try:
                 t1 = datetime.fromisoformat(record['trade_time'])
@@ -140,7 +144,17 @@ class TransferPairer:
             if not _is_semantically_similar(name_a, name_b):
                 continue
 
-            results.append(c)
+            out_record, in_record = self._normalize_pair_records(record, c)
+            results.append({
+                'out_bill_id': out_record['id'],
+                'in_bill_id': in_record['id'],
+                'out_bill': out_record,
+                'in_bill': in_record,
+                'match_reason': 'amount_time_counterparty',
+                'match_score': 60,
+                'time_diff_minutes': round(diff_minutes, 2),
+                'amount_diff_cents': abs((out_record.get('amount_cents') or 0) - (in_record.get('amount_cents') or 0)),
+            })
 
         return results
 
@@ -152,9 +166,15 @@ class TransferPairer:
         2. 在两条记录的 bill_accounting 中写入 transfer_link_id
         3. 若 fee_amount > 0，调用 generate_fee_record 生成手续费记录
         """
+        out_id, in_id = self._normalize_pair_ids(out_id, in_id)
         transfer_link_id = str(uuid.uuid4())
 
         with self.dal.transaction():
+            self.dal.delete(
+                'transfer_pair_decisions',
+                '(out_bill_id = ? AND in_bill_id = ?) OR (out_bill_id = ? AND in_bill_id = ?)',
+                (out_id, in_id, in_id, out_id),
+            )
             for bill_id in (out_id, in_id):
                 existing = self.dal.fetch_one(
                     "SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,)
@@ -214,6 +234,15 @@ class TransferPairer:
 
         return result
 
+    def reject_pair(self, out_id: int, in_id: int) -> dict:
+        out_id, in_id = self._normalize_pair_ids(out_id, in_id)
+        self.dal.insert_or_ignore('transfer_pair_decisions', {
+            'out_bill_id': out_id,
+            'in_bill_id': in_id,
+            'decision': 'rejected',
+        })
+        return {'success': True, 'out_id': out_id, 'in_id': in_id}
+
     def generate_fee_record(self, transfer_record: dict, fee_amount: int) -> dict:
         fee_record = {
             'channel': transfer_record.get('channel', ''),
@@ -236,3 +265,25 @@ class TransferPairer:
 
     def _create_pair(self, id1: int, id2: int) -> dict:
         return self.confirm_pair(id1, id2)
+
+    def _normalize_pair_records(self, record_a: dict, record_b: dict) -> tuple[dict, dict]:
+        if record_a.get('direction') == 'expense':
+            return dict(record_a), dict(record_b)
+        return dict(record_b), dict(record_a)
+
+    def _normalize_pair_ids(self, id1: int, id2: int) -> tuple[int, int]:
+        bill1 = self.dal.fetch_one("SELECT id, direction FROM unified_bills WHERE id = ?", (id1,))
+        bill2 = self.dal.fetch_one("SELECT id, direction FROM unified_bills WHERE id = ?", (id2,))
+        if not bill1 or not bill2:
+            return id1, id2
+        if bill1.get('direction') == 'expense':
+            return id1, id2
+        return id2, id1
+
+    def _is_rejected_pair(self, bill_id_1: int, bill_id_2: int) -> bool:
+        out_id, in_id = self._normalize_pair_ids(bill_id_1, bill_id_2)
+        row = self.dal.fetch_one(
+            "SELECT id FROM transfer_pair_decisions WHERE out_bill_id = ? AND in_bill_id = ? AND decision = 'rejected'",
+            (out_id, in_id),
+        )
+        return row is not None

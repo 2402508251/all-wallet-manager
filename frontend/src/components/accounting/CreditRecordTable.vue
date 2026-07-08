@@ -23,10 +23,10 @@
         {{ row.credit_account_name || '-' }}
       </template>
     </el-table-column>
-    <el-table-column label="还款状态" width="100">
+    <el-table-column label="关联状态" width="110">
       <template #default="{ row }">
-        <el-tag size="small" :type="row.transfer_link_id ? 'success' : 'warning'">
-          {{ row.transfer_link_id ? '已还款' : '未还款' }}
+        <el-tag size="small" :type="row.credit_account_id ? 'success' : 'warning'">
+          {{ row.credit_account_id ? '已关联信用账户' : '待绑定账户' }}
         </el-tag>
       </template>
     </el-table-column>

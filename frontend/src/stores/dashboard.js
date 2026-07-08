@@ -15,6 +15,7 @@ export const useDashboardStore = defineStore('dashboard', {
       family_id: null,
       role_id: null,
     },
+    hideRepayment: false,
     monthlySummary: null,
     categoryDistribution: [],
     trendData: null,
@@ -93,6 +94,7 @@ export const useDashboardStore = defineStore('dashboard', {
           month: this.filter.month,
           family_id: this.filter.family_id,
           role_id: this.filter.role_id,
+          hide_internal: this.hideRepayment,
         }
         const range = monthDateRange(this.filter.year, this.filter.month)
         const billScope = {
@@ -116,6 +118,7 @@ export const useDashboardStore = defineStore('dashboard', {
             ...this.trendRange,
             family_id: this.filter.family_id,
             role_id: this.filter.role_id,
+            hide_internal: this.hideRepayment,
           }),
           call('query_bills', { filters: billScope, page: 1, page_size: 6 }),
           call('get_collection_list', { page: 1, page_size: 8 }),

@@ -4,13 +4,14 @@ SQLite 数据库连接管理、建表、版本迁移
 PyWebView 为每个 JS API 调用创建独立线程，threading.local 多连接模式
 在 Windows 上极易产生文件锁竞争，改为单连接 + 锁最可靠
 """
+import os
 import sqlite3
 import threading
 import uuid
 
 
 class DatabaseManager:
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -35,6 +36,7 @@ class DatabaseManager:
 
             self._ensure_schema_v4()
             self._ensure_schema_v5()
+            self._ensure_schema_v6()
             self._ensure_default_seed_data(conn)
             conn.commit()
         except Exception:
@@ -77,272 +79,9 @@ class DatabaseManager:
 
     def _create_tables(self) -> None:
         conn = self.get_connection()
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS families (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            is_default INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS roles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            role_type TEXT NOT NULL DEFAULT 'personal',
-            is_shared INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS role_families (
-            role_id INTEGER NOT NULL,
-            family_id INTEGER NOT NULL,
-            PRIMARY KEY (role_id, family_id),
-            FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (family_id) REFERENCES families(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_name TEXT NOT NULL,
-            account_tag TEXT,
-            channel TEXT NOT NULL,
-            role_id INTEGER,
-            merged_into_account_id INTEGER,
-            balance_cents INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (merged_into_account_id) REFERENCES accounts(id),
-            UNIQUE (account_tag, channel)
-        );
-
-        CREATE TABLE IF NOT EXISTS account_aliases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id INTEGER NOT NULL,
-            channel TEXT NOT NULL,
-            alias_type TEXT NOT NULL,
-            alias_value TEXT NOT NULL,
-            source_kind TEXT NOT NULL DEFAULT 'manual',
-            source_account_id INTEGER,
-            merge_session_id TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (account_id) REFERENCES accounts(id),
-            FOREIGN KEY (source_account_id) REFERENCES accounts(id),
-            UNIQUE (account_id, channel, alias_type, alias_value)
-        );
-
-        CREATE TABLE IF NOT EXISTS credit_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_name TEXT NOT NULL,
-            credit_type TEXT NOT NULL,
-            role_id INTEGER NOT NULL,
-            linked_account_id INTEGER,
-            credit_limit_cents INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (linked_account_id) REFERENCES accounts(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS unified_bills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel TEXT NOT NULL,
-            trade_time TEXT NOT NULL,
-            trade_type TEXT NOT NULL,
-            direction TEXT NOT NULL,
-            amount_cents INTEGER NOT NULL,
-            counterparty TEXT,
-            product_desc TEXT,
-            payment_method TEXT,
-            status TEXT,
-            channel_trade_no TEXT NOT NULL,
-            remark TEXT,
-            account_id INTEGER,
-            role_id INTEGER,
-            category_id INTEGER,
-            category_source TEXT NOT NULL DEFAULT 'auto',
-            category_score INTEGER NOT NULL DEFAULT 0,
-            category_rule_id INTEGER,
-            is_category_manual_edited INTEGER NOT NULL DEFAULT 0,
-            assign_status TEXT NOT NULL DEFAULT 'pending',
-            is_deleted INTEGER NOT NULL DEFAULT 0,
-            is_system INTEGER NOT NULL DEFAULT 0,
-            batch_id TEXT NOT NULL,
-            source_bill_id INTEGER,
-            is_manual_edited INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (account_id) REFERENCES accounts(id),
-            FOREIGN KEY (role_id) REFERENCES roles(id),
-            FOREIGN KEY (category_id) REFERENCES bill_categories(id),
-            FOREIGN KEY (source_bill_id) REFERENCES source_bills(id),
-            UNIQUE (channel, channel_trade_no)
-        );
-
-        CREATE TABLE IF NOT EXISTS bill_accounting (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bill_id INTEGER NOT NULL UNIQUE,
-            transfer_link_id TEXT,
-            is_credit INTEGER NOT NULL DEFAULT 0,
-            credit_account_id INTEGER,
-            merge_status TEXT NOT NULL DEFAULT 'normal',
-            merged_group_id TEXT,
-            real_payer_account_id INTEGER,
-            original_counterparty TEXT,
-            original_product_desc TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (bill_id) REFERENCES unified_bills(id),
-            FOREIGN KEY (credit_account_id) REFERENCES credit_accounts(id),
-            FOREIGN KEY (real_payer_account_id) REFERENCES accounts(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS source_bills (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bill_id INTEGER NOT NULL UNIQUE,
-            channel TEXT NOT NULL,
-            raw_json TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (bill_id) REFERENCES unified_bills(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS import_batches (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch_id TEXT NOT NULL UNIQUE,
-            source TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            total_count INTEGER NOT NULL DEFAULT 0,
-            success_count INTEGER NOT NULL DEFAULT 0,
-            duplicate_count INTEGER NOT NULL DEFAULT 0,
-            merged_count INTEGER NOT NULL DEFAULT 0,
-            pending_count INTEGER NOT NULL DEFAULT 0,
-            unclassified_count INTEGER NOT NULL DEFAULT 0,
-            import_time TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS bill_categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            icon TEXT,
-            parent_id INTEGER,
-            level INTEGER NOT NULL DEFAULT 1,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            source TEXT NOT NULL DEFAULT 'user',
-            is_enabled INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (parent_id) REFERENCES bill_categories(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS category_match_fields (
-            field_key TEXT PRIMARY KEY,
-            label TEXT NOT NULL,
-            source_scope TEXT NOT NULL,
-            field_expr TEXT NOT NULL,
-            is_system INTEGER NOT NULL DEFAULT 1,
-            is_enabled INTEGER NOT NULL DEFAULT 1,
-            sort_order INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS category_keywords (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category_id INTEGER NOT NULL,
-            keyword TEXT NOT NULL,
-            match_field TEXT NOT NULL DEFAULT 'counterparty',
-            weight INTEGER NOT NULL DEFAULT 10,
-            priority INTEGER NOT NULL DEFAULT 0,
-            match_mode TEXT NOT NULL DEFAULT 'contains',
-            is_enabled INTEGER NOT NULL DEFAULT 1,
-            source TEXT NOT NULL DEFAULT 'user',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES bill_categories(id),
-            FOREIGN KEY (match_field) REFERENCES category_match_fields(field_key)
-        );
-
-        CREATE TABLE IF NOT EXISTS email_configs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email_addr TEXT NOT NULL,
-            imap_server TEXT NOT NULL,
-            imap_port INTEGER NOT NULL DEFAULT 993,
-            auth_code_enc TEXT NOT NULL,
-            last_uid INTEGER,
-            last_fetch_ts TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS collection_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_type TEXT NOT NULL,
-            email_config_id INTEGER,
-            file_name TEXT NOT NULL,
-            file_path TEXT,
-            channel TEXT,
-            channel_source TEXT NOT NULL DEFAULT 'auto_detect',
-            status TEXT NOT NULL DEFAULT 'pending',
-            parse_result TEXT,
-            batch_id TEXT,
-            error_msg TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (email_config_id) REFERENCES email_configs(id),
-            FOREIGN KEY (batch_id) REFERENCES import_batches(batch_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            snapshot_type TEXT NOT NULL,
-            description TEXT,
-            bill_count INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS snapshot_details (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            snapshot_id INTEGER NOT NULL,
-            bill_id INTEGER NOT NULL,
-            table_name TEXT NOT NULL,
-            field_name TEXT NOT NULL,
-            old_value TEXT,
-            new_value TEXT,
-            is_deleted_after INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
-        );
-        """)
-
-        conn.executescript("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_channel_trade_no
-            ON unified_bills(channel, channel_trade_no);
-        CREATE INDEX IF NOT EXISTS idx_bills_trade_time ON unified_bills(trade_time);
-        CREATE INDEX IF NOT EXISTS idx_bills_account_id ON unified_bills(account_id);
-        CREATE INDEX IF NOT EXISTS idx_bills_role_id ON unified_bills(role_id);
-        CREATE INDEX IF NOT EXISTS idx_bills_category_id ON unified_bills(category_id);
-        CREATE INDEX IF NOT EXISTS idx_bills_category_source ON unified_bills(category_source);
-        CREATE INDEX IF NOT EXISTS idx_bills_category_manual ON unified_bills(is_category_manual_edited);
-        CREATE INDEX IF NOT EXISTS idx_bills_assign_status ON unified_bills(assign_status);
-        CREATE INDEX IF NOT EXISTS idx_bills_batch_id ON unified_bills(batch_id);
-        CREATE INDEX IF NOT EXISTS idx_bills_is_deleted ON unified_bills(is_deleted);
-        CREATE INDEX IF NOT EXISTS idx_bills_is_system ON unified_bills(is_system);
-        CREATE INDEX IF NOT EXISTS idx_accounts_merged_into ON accounts(merged_into_account_id);
-        CREATE INDEX IF NOT EXISTS idx_account_aliases_lookup ON account_aliases(channel, alias_type, alias_value);
-        CREATE INDEX IF NOT EXISTS idx_account_aliases_account ON account_aliases(account_id);
-        CREATE INDEX IF NOT EXISTS idx_account_aliases_merge_session ON account_aliases(merge_session_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounting_bill_id ON bill_accounting(bill_id);
-        CREATE INDEX IF NOT EXISTS idx_accounting_merge_status ON bill_accounting(merge_status);
-        CREATE INDEX IF NOT EXISTS idx_accounting_merged_group ON bill_accounting(merged_group_id);
-        CREATE INDEX IF NOT EXISTS idx_accounting_real_payer ON bill_accounting(real_payer_account_id);
-        CREATE INDEX IF NOT EXISTS idx_accounting_transfer_link ON bill_accounting(transfer_link_id);
-        CREATE INDEX IF NOT EXISTS idx_source_bills_bill_id ON source_bills(bill_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_batch_id ON import_batches(batch_id);
-        CREATE INDEX IF NOT EXISTS idx_collection_status ON collection_records(status);
-        CREATE INDEX IF NOT EXISTS idx_snapshot_details_snapshot ON snapshot_details(snapshot_id);
-        CREATE INDEX IF NOT EXISTS idx_snapshot_details_bill ON snapshot_details(bill_id);
-        CREATE INDEX IF NOT EXISTS idx_role_families_family_id ON role_families(family_id);
-        CREATE INDEX IF NOT EXISTS idx_categories_parent ON bill_categories(parent_id);
-        CREATE INDEX IF NOT EXISTS idx_category_keywords_category ON category_keywords(category_id);
-        CREATE INDEX IF NOT EXISTS idx_category_keywords_field ON category_keywords(match_field);
-        """)
+        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts', 'init_db.sql')
+        with open(script_path, 'r', encoding='utf-8') as f:
+            conn.executescript(f.read())
 
     def _insert_default_data(self) -> None:
         conn = self.get_connection()
@@ -542,6 +281,30 @@ class DatabaseManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_parent ON bill_categories(parent_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_category ON category_keywords(category_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_category_keywords_field ON category_keywords(match_field)")
+
+    def _ensure_schema_v6(self) -> None:
+        """确保账务处理扩展表存在；项目实际通过重建库应用 schema，这里保留轻量兜底。"""
+        conn = self.get_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_pair_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                out_bill_id INTEGER NOT NULL,
+                in_bill_id INTEGER NOT NULL,
+                decision TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (out_bill_id) REFERENCES unified_bills(id),
+                FOREIGN KEY (in_bill_id) REFERENCES unified_bills(id),
+                UNIQUE (out_bill_id, in_bill_id)
+            )
+        """)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_pair_decisions_pair "
+            "ON transfer_pair_decisions(out_bill_id, in_bill_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transfer_pair_decisions_decision "
+            "ON transfer_pair_decisions(decision)"
+        )
 
     def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
         """迁移 v2 到 v3：跨平台合并机制重构（不删除账单，使用 merged_group_id）"""

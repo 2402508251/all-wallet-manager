@@ -57,11 +57,13 @@ export const useReportStore = defineStore('report', {
           month: this.filter.month,
           family_id: this.filter.family_id,
           role_id: this.filter.role_id,
+          hide_internal: this.hideRepayment,
         }
         const trendParams = {
           ...this.trendRange,
           family_id: this.filter.family_id,
           role_id: this.filter.role_id,
+          hide_internal: this.hideRepayment,
         }
 
         const [summary, distribution, trend] = await Promise.all([

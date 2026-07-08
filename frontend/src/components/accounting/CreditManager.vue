@@ -1,9 +1,13 @@
 <template>
   <div class="credit-manager">
-    <h4>信用账户列表</h4>
+    <div class="credit-records-header">
+      <h4>信用账户列表</h4>
+      <el-button type="primary" size="small" @click="handleCreateAccount">新建信用账户</el-button>
+    </div>
     <CreditAccountTable
       :accounts="accountingStore.creditAccounts"
       @edit="handleEditAccount"
+      @delete="handleDeleteAccount"
     />
 
     <el-divider />
@@ -61,8 +65,16 @@ function loadRecords() {
   accountingStore.loadRepayRecords(currentMonth.value, familyFilter.value)
 }
 
+function handleCreateAccount() {
+  accountDialogRef.value?.open()
+}
+
 function handleEditAccount(account) {
   accountDialogRef.value?.open(account)
+}
+
+async function handleDeleteAccount(account) {
+  await accountingStore.deleteCreditAccount(account.id)
 }
 </script>
 
