@@ -26,6 +26,10 @@ export const useBillStore = defineStore('bill', {
     },
     bills: [],
     total: 0,
+    summary: {
+      income: 0,
+      expense: 0,
+    },
     page: 1,
     pageSize: 20,
     currentBill: null,
@@ -34,24 +38,27 @@ export const useBillStore = defineStore('bill', {
   }),
 
   actions: {
+    effectiveFilters() {
+      const filters = {}
+      for (const [k, v] of Object.entries(this.filter)) {
+        if (v !== null && v !== '' && v !== undefined) {
+          filters[k] = v
+        }
+      }
+      return filters
+    },
+
     async queryBills() {
       this.loading = true
       try {
-        // 清理 null/空值
-        const filters = {}
-        for (const [k, v] of Object.entries(this.filter)) {
-          if (v !== null && v !== '' && v !== undefined) {
-            filters[k] = v
-          }
-        }
-
         const data = await call('query_bills', {
-          filters,
+          filters: this.effectiveFilters(),
           page: this.page,
           page_size: this.pageSize,
         })
         this.bills = data.list
         this.total = data.total
+        this.summary = data.summary || { income: 0, expense: 0 }
       } finally {
         this.loading = false
       }
@@ -66,6 +73,16 @@ export const useBillStore = defineStore('bill', {
     async updateBill(billId, fields) {
       await call('update_bill', { bill_id: billId, fields })
       await this.queryBills()
+    },
+
+    async createBill(fields) {
+      const data = await call('create_bill', { fields })
+      await this.queryBills()
+      return data
+    },
+
+    async exportBills() {
+      return await call('export_bills', { filters: this.effectiveFilters() })
     },
 
     async batchUpdateBills(billIds, fields) {

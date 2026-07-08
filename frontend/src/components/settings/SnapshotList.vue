@@ -90,7 +90,7 @@ async function showDetails(row) {
 async function handleRestore(row) {
   try {
     await ElMessageBox.confirm(
-      '确定要回退到此快照状态吗？此操作将恢复快照中记录的所有变更。',
+      '确定要回退到此快照状态吗？系统将恢复快照中已记录的账单与账务字段变更。\n\n注意：若记录在快照创建后被物理删除，当前快照无法将其重建恢复。',
       '确认回退',
       { type: 'warning' }
     )
@@ -111,7 +111,15 @@ async function handleDelete(row) {
 }
 
 function snapshotTypeLabel(type) {
-  const map = { reparse: '重新解析', batch_import: '批次导入', manual: '手动' }
+  const map = {
+    manual: '手动快照',
+    reparse: '重新解析',
+    recategorize: '重新分类',
+    batch_import: '批量导入',
+    account_role_change: '帐户角色变更',
+    batch_account_role_change: '批量帐户角色变更',
+    batch_reassign: '批量重分配',
+  }
   return map[type] || type
 }
 

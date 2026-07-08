@@ -5,7 +5,34 @@
         {{ formatTime(bill.trade_time) }}
       </el-descriptions-item>
       <el-descriptions-item label="交易类型">
-        <el-tag size="small" :type="tradeTypeTag(bill.trade_type)">{{ tradeTypeLabel(bill.trade_type) }}</el-tag>
+        <el-select
+          :model-value="bill.trade_type"
+          size="small"
+          placeholder="选择交易类型"
+          @change="handleTradeTypeChange"
+        >
+          <el-option
+            v-for="option in tradeTypeSelectOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </el-descriptions-item>
+      <el-descriptions-item label="收支方向">
+        <el-select
+          :model-value="bill.direction"
+          size="small"
+          placeholder="选择收支方向"
+          @change="handleDirectionChange"
+        >
+          <el-option
+            v-for="option in directionSelectOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
       </el-descriptions-item>
       <el-descriptions-item label="渠道">
         <el-tag size="small" :type="channelTag(bill.channel)">
@@ -13,7 +40,11 @@
         </el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="交易对方">
-        {{ bill.counterparty || '-' }}
+        <div class="inline-editor">
+          <el-input v-model="textDraft.counterparty" size="small" placeholder="交易对方" />
+          <el-button size="small" @click="resetTextField('counterparty')" :disabled="!textChanged.counterparty">恢复</el-button>
+          <el-button type="primary" size="small" @click="saveTextField('counterparty')" :disabled="!textChanged.counterparty">保存</el-button>
+        </div>
       </el-descriptions-item>
       <el-descriptions-item label="金额">
         <strong :class="directionClass(bill.direction)">
@@ -21,10 +52,18 @@
         </strong>
       </el-descriptions-item>
       <el-descriptions-item label="商品说明">
-        {{ bill.product_desc || '-' }}
+        <div class="inline-editor">
+          <el-input v-model="textDraft.product_desc" size="small" placeholder="商品说明" />
+          <el-button size="small" @click="resetTextField('product_desc')" :disabled="!textChanged.product_desc">恢复</el-button>
+          <el-button type="primary" size="small" @click="saveTextField('product_desc')" :disabled="!textChanged.product_desc">保存</el-button>
+        </div>
       </el-descriptions-item>
       <el-descriptions-item label="支付方式">
-        {{ bill.payment_method || '-' }}
+        <div class="inline-editor">
+          <el-input v-model="textDraft.payment_method" size="small" placeholder="支付方式" />
+          <el-button size="small" @click="resetTextField('payment_method')" :disabled="!textChanged.payment_method">恢复</el-button>
+          <el-button type="primary" size="small" @click="saveTextField('payment_method')" :disabled="!textChanged.payment_method">保存</el-button>
+        </div>
       </el-descriptions-item>
       <el-descriptions-item label="交易状态">
         {{ bill.status || '-' }}
@@ -94,10 +133,10 @@ import {
   channelLabel,
   channelTag,
   directionClass,
+  directionOptions,
   formatDateTime,
   formatSignedYuan,
-  tradeTypeLabel,
-  tradeTypeTag,
+  tradeTypeSelectOptions,
 } from '@/utils/formatters'
 
 const props = defineProps({
@@ -108,13 +147,32 @@ const emit = defineEmits(['update', 'delete'])
 
 const systemStore = useSystemStore()
 const remarkDraft = ref('')
+const textDraft = ref({
+  counterparty: '',
+  product_desc: '',
+  payment_method: '',
+})
 
 const categories = computed(() => systemStore.categories)
+const directionSelectOptions = computed(() => Object.entries(directionOptions).map(([value, meta]) => ({
+  value,
+  label: meta.label,
+})))
 const normalizedBillRemark = computed(() => String(props.bill?.remark || ''))
 const remarkChanged = computed(() => remarkDraft.value !== normalizedBillRemark.value)
+const textChanged = computed(() => ({
+  counterparty: textDraft.value.counterparty !== String(props.bill?.counterparty || ''),
+  product_desc: textDraft.value.product_desc !== String(props.bill?.product_desc || ''),
+  payment_method: textDraft.value.payment_method !== String(props.bill?.payment_method || ''),
+}))
 
 watch(() => props.bill, (bill) => {
   remarkDraft.value = String(bill?.remark || '')
+  textDraft.value = {
+    counterparty: String(bill?.counterparty || ''),
+    product_desc: String(bill?.product_desc || ''),
+    payment_method: String(bill?.payment_method || ''),
+  }
 }, { immediate: true })
 
 const accountName = computed(() => {
@@ -149,6 +207,33 @@ function handleCategoryChange(categoryId) {
   ElMessage.success('分类已更新')
 }
 
+function handleTradeTypeChange(tradeType) {
+  if (tradeType === props.bill?.trade_type) return
+  emit('update', { trade_type: tradeType })
+  ElMessage.success('交易类型已更新')
+}
+
+function handleDirectionChange(direction) {
+  if (direction === props.bill?.direction) return
+  emit('update', { direction })
+  ElMessage.success('收支方向已更新')
+}
+
+function resetTextField(field) {
+  textDraft.value[field] = String(props.bill?.[field] || '')
+}
+
+function saveTextField(field) {
+  if (!textChanged.value[field]) return
+  const labels = {
+    counterparty: '交易对方',
+    product_desc: '商品说明',
+    payment_method: '支付方式',
+  }
+  emit('update', { [field]: textDraft.value[field].trim() })
+  ElMessage.success(`${labels[field]}已更新`)
+}
+
 function resetRemark() {
   remarkDraft.value = normalizedBillRemark.value
 }
@@ -181,9 +266,15 @@ function handleDelete() {
   justify-content: flex-end;
 }
 
-.remark-editor {
+.remark-editor,
+.inline-editor {
   display: grid;
   gap: var(--spacing-sm);
+}
+
+.inline-editor {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
 }
 
 .remark-actions {

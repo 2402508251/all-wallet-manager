@@ -225,6 +225,12 @@ export const useSystemStore = defineStore('system', {
       await this.loadSnapshots()
     },
 
+    async createSnapshot(description) {
+      const data = await call('create_snapshot', { description })
+      await this.loadSnapshots()
+      return data
+    },
+
     // ─── 数据管理 ─────────────────────────
     async reparse(scope) {
       return await call('reparse', { scope })

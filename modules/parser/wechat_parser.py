@@ -141,6 +141,9 @@ class WechatParser(BaseParser):
                 trade_type_raw, 'wechat',
                 payment_method=mapped.get('payment_method'),
             )
+            trade_type = self.enum_mapper.finalize_trade_type(
+                trade_type, amount_result['direction']
+            )
 
         status = mapped.get('status', '')
         if status == '已退款' or status == '交易关闭':

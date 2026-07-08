@@ -59,13 +59,6 @@ class ReParser:
                 parser = ParserFactory.get_parser(channel, self.config)
                 mapped = parser.field_mapper.map(raw_data, channel)
 
-                new_trade_type = mapped.get('trade_type_raw', '')
-                if parser.enum_mapper:
-                    new_trade_type = parser.enum_mapper.map_trade_type(
-                        new_trade_type, channel,
-                        payment_method=mapped.get('payment_method'),
-                    )
-
                 new_trade_time = parser.time_normalizer.normalize(
                     mapped.get('trade_time_raw'), channel
                 )
@@ -75,6 +68,8 @@ class ReParser:
                     direction_raw=mapped.get('direction_raw'),
                     channel=channel,
                 )
+
+                new_trade_type = self._resolve_trade_type(parser, mapped, channel, amount_result['direction'])
                 new_remark = bill['remark']
                 if channel == 'ccb':
                     new_remark = str(raw_data.get('摘要', '') or '').strip()
@@ -128,6 +123,23 @@ class ReParser:
             'skipped': skipped,
             'errors': errors,
         }
+
+    def _resolve_trade_type(self, parser, mapped: dict, channel: str, direction: str) -> str:
+        raw_type = mapped.get('trade_type_raw', '')
+        trade_type = raw_type
+        if parser.enum_mapper:
+            trade_type = parser.enum_mapper.map_trade_type(
+                raw_type, channel,
+                payment_method=mapped.get('payment_method'),
+            )
+
+            if channel == 'alipay' and parser.enum_mapper.is_credit_consumption(
+                mapped.get('payment_method', ''), 'alipay'
+            ):
+                trade_type = 'credit_consumption'
+            else:
+                trade_type = parser.enum_mapper.finalize_trade_type(trade_type, direction)
+        return trade_type
 
     def _get_scope_bill_ids(self, scope: dict) -> list[int]:
         scope_type = scope.get('type', 'all')

@@ -25,6 +25,23 @@ class EnumMapper:
 
         return 'other'
 
+    def finalize_trade_type(self, trade_type: str, direction: str) -> str:
+        """按最终收支方向收敛交易类型，避免转入/转出与方向冲突"""
+        if trade_type in ('transfer_in', 'transfer_out'):
+            if direction == 'income':
+                return 'transfer_in'
+            if direction == 'expense':
+                return 'transfer_out'
+            return trade_type
+
+        if trade_type != 'other':
+            return trade_type
+        if direction == 'income':
+            return 'other_income'
+        if direction == 'expense':
+            return 'other_expense'
+        return 'other'
+
     def map_direction(self, raw_direction: str, channel: str) -> str:
         """映射收支方向"""
         mappings = self.config.get_enum_mappings(channel)

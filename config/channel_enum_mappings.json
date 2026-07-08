@@ -5,15 +5,25 @@
       "商户消费": "consumption",
       "微信红包-发出": "transfer_out",
       "微信红包-领取": "transfer_in",
+      "微信红包（单发）": "transfer_out",
+      "微信红包（群红包）": "transfer_out",
+      "微信红包": "transfer_out",
+      "微信红包-退款": "refund",
+      "转账": "transfer_out",
       "转账-转出": "transfer_out",
       "转账-转入": "transfer_in",
       "信用卡还款": "repayment",
       "商户消费退款": "refund",
+      "中铁网络-退款": "refund",
+      "京东商城平台商户-退款": "refund",
+      "美团平台商户-退款": "refund",
       "充值": "topup",
       "提现": "withdrawal",
       "理财通买入": "investment",
       "零钱通存入": "investment",
-      "群收款": "transfer_in"
+      "群收款": "transfer_in",
+      "扫二维码付款": "consumption",
+      "二维码收款": "transfer_in"
     },
     "direction": {
       "支出": "expense",
@@ -27,7 +37,13 @@
       "转账": "transfer_out",
       "余额宝": "investment",
       "充值": "topup",
-      "提现": "withdrawal"
+      "提现": "withdrawal",
+      "生活服务": "consumption",
+      "日用百货": "consumption",
+      "充值缴费": "topup",
+      "餐饮美食": "consumption",
+      "文化休闲": "consumption",
+      "教育培训": "consumption"
     },
     "direction": {
       "支出": "expense",
@@ -42,7 +58,13 @@
       "消费退货": "refund",
       "还款": "repayment",
       "充值": "topup",
-      "转账": "transfer_out"
+      "转账": "transfer_out",
+      "利息存入": "other_income",
+      "支付机构提现": "withdrawal",
+      "跨行自助取款": "withdrawal",
+      "跨行转出": "transfer_out",
+      "银联入账": "transfer_in",
+      "基金申购": "investment"
     }
   }
 }

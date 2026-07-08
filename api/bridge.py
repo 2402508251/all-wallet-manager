@@ -40,6 +40,8 @@ VALID_TRADE_TYPES = {
     'topup',
     'withdrawal',
     'investment',
+    'other_income',
+    'other_expense',
     'other',
 }
 
@@ -75,6 +77,76 @@ class ApiBridge:
         if value == 'mirror':
             value = 'repayment_mirror'
         return value
+
+    def _build_bill_conditions(self, filters=None) -> tuple[str, list]:
+        filters = filters or {}
+        conditions = ["ub.is_deleted = 0"]
+        sql_params = []
+
+        if filters.get('channel'):
+            conditions.append("ub.channel = ?")
+            sql_params.append(filters['channel'])
+        if filters.get('direction'):
+            conditions.append("ub.direction = ?")
+            sql_params.append(filters['direction'])
+        if filters.get('trade_type'):
+            trade_type = self._normalize_trade_type(filters['trade_type'])
+            conditions.append("ub.trade_type = ?")
+            sql_params.append(trade_type)
+        if filters.get('start_time'):
+            conditions.append("ub.trade_time >= ?")
+            sql_params.append(filters['start_time'])
+        if filters.get('end_time'):
+            conditions.append("ub.trade_time < ?")
+            sql_params.append(filters['end_time'])
+        if filters.get('family_id'):
+            conditions.append(
+                "EXISTS (SELECT 1 FROM role_families rf WHERE rf.role_id = ub.role_id AND rf.family_id = ?)"
+            )
+            sql_params.append(filters['family_id'])
+        if filters.get('role_id'):
+            conditions.append("ub.role_id = ?")
+            sql_params.append(filters['role_id'])
+        if filters.get('account_id'):
+            conditions.append("ub.account_id = ?")
+            sql_params.append(filters['account_id'])
+        if filters.get('assign_status'):
+            conditions.append("ub.assign_status = ?")
+            sql_params.append(filters['assign_status'])
+        if filters.get('merge_status'):
+            conditions.append("ba.merge_status = ?")
+            sql_params.append(filters['merge_status'])
+        if filters.get('category_id'):
+            conditions.append("ub.category_id = ?")
+            sql_params.append(filters['category_id'])
+        if filters.get('keyword'):
+            conditions.append("(ub.counterparty LIKE ? OR ub.product_desc LIKE ? OR ub.remark LIKE ?)")
+            kw = f"%{filters['keyword']}%"
+            sql_params.extend([kw, kw, kw])
+        if filters.get('is_deleted') is not None:
+            conditions[0] = f"ub.is_deleted = {int(filters['is_deleted'])}"
+
+        return " AND ".join(conditions), sql_params
+
+    def _validate_existing_id(self, table: str, record_id):
+        if not record_id:
+            return None
+        row = self.dal.fetch_one(f"SELECT id FROM {table} WHERE id = ?", (record_id,))
+        return record_id if row else None
+
+    def _resolve_bill_assignment(self, account_id=None, role_id=None) -> tuple[int | None, int | None, str]:
+        resolved_account_id = self._validate_existing_id('accounts', account_id)
+        resolved_role_id = None
+
+        if resolved_account_id:
+            account = self.dal.fetch_one("SELECT role_id FROM accounts WHERE id = ?", (resolved_account_id,))
+            if account and account['role_id']:
+                resolved_role_id = self._validate_existing_id('roles', account['role_id'])
+        elif role_id:
+            resolved_role_id = self._validate_existing_id('roles', role_id)
+
+        assign_status = 'assigned' if (resolved_account_id and resolved_role_id) else 'pending'
+        return resolved_account_id, resolved_role_id, assign_status
 
     def _ensure_bill_accounting_row(self, bill_id: int, data=None) -> dict:
         existing = self.dal.fetch_one("SELECT * FROM bill_accounting WHERE bill_id = ?", (bill_id,))
@@ -401,9 +473,12 @@ class ApiBridge:
                 )
                 return self.err('; '.join(result.errors))
 
-            from modules.attribution.account_extractor import AccountExtractor
-            extractor = AccountExtractor()
-            account_info = extractor.extract(channel, file_path)
+            if channel == 'self_export':
+                account_info = {'accounts': []}
+            else:
+                from modules.attribution.account_extractor import AccountExtractor
+                extractor = AccountExtractor()
+                account_info = extractor.extract(channel, file_path)
 
             batch_id = str(uuid.uuid4())
             now = self._now()
@@ -457,31 +532,41 @@ class ApiBridge:
                     if not account_id and '_default_' in payment_method_to_account:
                         account_id = payment_method_to_account['_default_']
 
-                    role_id = None
-                    if account_id:
-                        account = self.dal.fetch_one(
-                            "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
+                    if channel == 'self_export':
+                        account_id, role_id, assign_status = self._resolve_bill_assignment(
+                            rec.get('account_id'), rec.get('role_id')
                         )
-                        if not account:
-                            logger.warning(
-                                "parse_collection ignored invalid account_id=%s record_id=%s trade_no=%s",
-                                account_id, record_id, rec.get('channel_trade_no'),
+                    else:
+                        role_id = None
+                        if account_id:
+                            account = self.dal.fetch_one(
+                                "SELECT role_id FROM accounts WHERE id = ?", (account_id,)
                             )
-                            account_id = None
-                        elif account['role_id']:
-                            role = self.dal.fetch_one(
-                                "SELECT id FROM roles WHERE id = ?", (account['role_id'],)
-                            )
-                            if role:
-                                role_id = account['role_id']
-                            else:
+                            if not account:
                                 logger.warning(
-                                    "parse_collection ignored invalid role_id=%s for account_id=%s record_id=%s trade_no=%s",
-                                    account['role_id'], account_id, record_id, rec.get('channel_trade_no'),
+                                    "parse_collection ignored invalid account_id=%s record_id=%s trade_no=%s",
+                                    account_id, record_id, rec.get('channel_trade_no'),
                                 )
+                                account_id = None
+                            elif account['role_id']:
+                                role = self.dal.fetch_one(
+                                    "SELECT id FROM roles WHERE id = ?", (account['role_id'],)
+                                )
+                                if role:
+                                    role_id = account['role_id']
+                                else:
+                                    logger.warning(
+                                        "parse_collection ignored invalid role_id=%s for account_id=%s record_id=%s trade_no=%s",
+                                        account['role_id'], account_id, record_id, rec.get('channel_trade_no'),
+                                    )
 
-                    assign_status = 'assigned' if (account_id and role_id) else 'pending'
+                        assign_status = 'assigned' if (account_id and role_id) else 'pending'
 
+                    category_id = None
+                    if channel == 'self_export':
+                        category_id = self._validate_existing_id('bill_categories', rec.get('category_id'))
+
+                    is_manual_category = bool(rec.get('is_category_manual_edited')) or rec.get('category_source') == 'manual'
                     bill_data = {
                         'channel': rec['channel'],
                         'trade_time': rec['trade_time'],
@@ -496,8 +581,14 @@ class ApiBridge:
                         'remark': rec.get('remark', ''),
                         'account_id': account_id,
                         'role_id': role_id,
+                        'category_id': category_id,
                         'assign_status': assign_status,
-                        'is_system': 0,
+                        'is_system': int(rec.get('is_system') or 0),
+                        'is_manual_edited': int(rec.get('is_manual_edited') or 0),
+                        'is_category_manual_edited': 1 if (category_id and is_manual_category) else 0,
+                        'category_source': 'manual' if (category_id and is_manual_category) else 'auto',
+                        'category_score': 0,
+                        'category_rule_id': None,
                         'batch_id': batch_id,
                         'created_at': now,
                         'updated_at': now,
@@ -510,7 +601,7 @@ class ApiBridge:
                         self.dal.insert('source_bills', {
                             'bill_id': bill_id,
                             'channel': rec['channel'],
-                            'raw_json': json.dumps(raw.get('raw', {}), ensure_ascii=False, cls=DateTimeEncoder),
+                            'raw_json': json.dumps(raw.get('raw', raw), ensure_ascii=False, cls=DateTimeEncoder),
                             'created_at': now,
                         })
 
@@ -522,12 +613,15 @@ class ApiBridge:
                         post_action, bill_id, rec['channel'], batch_id,
                     )
 
-                    category_result = category_service.categorize_bill(bill_id, bill=imported_bill)
-                    category_service.apply_result(bill_id, category_result)
-                    if category_result.matched:
+                    if category_id:
                         classified_count += 1
                     else:
-                        unclassified_count += 1
+                        category_result = category_service.categorize_bill(bill_id, bill=imported_bill)
+                        category_service.apply_result(bill_id, category_result)
+                        if category_result.matched:
+                            classified_count += 1
+                        else:
+                            unclassified_count += 1
 
                     success_count += 1
 
@@ -592,7 +686,7 @@ class ApiBridge:
         p = params or {}
         record_id = p.get('record_id')
         channel = p.get('channel', '')
-        if channel not in ('wechat', 'alipay', 'ccb'):
+        if channel not in ('wechat', 'alipay', 'ccb', 'self_export'):
             return self.err('无效渠道')
         self.dal.update(
             'collection_records',
@@ -666,67 +760,31 @@ class ApiBridge:
 
     def query_bills(self, params=None) -> dict:
         p = params or {}
-        filters = p.get('filters')
+        filters = p.get('filters') or {}
         page = p.get('page', 1)
         page_size = p.get('page_size', 20)
 
-        conditions = ["ub.is_deleted = 0"]
-        sql_params = []
-
-        if filters:
-            if filters.get('channel'):
-                conditions.append("ub.channel = ?")
-                sql_params.append(filters['channel'])
-            if filters.get('direction'):
-                conditions.append("ub.direction = ?")
-                sql_params.append(filters['direction'])
-            if filters.get('trade_type'):
-                trade_type = self._normalize_trade_type(filters['trade_type'])
-                conditions.append("ub.trade_type = ?")
-                sql_params.append(trade_type)
-            if filters.get('start_time'):
-                conditions.append("ub.trade_time >= ?")
-                sql_params.append(filters['start_time'])
-            if filters.get('end_time'):
-                conditions.append("ub.trade_time <= ?")
-                sql_params.append(filters['end_time'])
-            if filters.get('family_id'):
-                conditions.append(
-                    "EXISTS (SELECT 1 FROM role_families rf WHERE rf.role_id = ub.role_id AND rf.family_id = ?)"
-                )
-                sql_params.append(filters['family_id'])
-            if filters.get('role_id'):
-                conditions.append("ub.role_id = ?")
-                sql_params.append(filters['role_id'])
-            if filters.get('account_id'):
-                conditions.append("ub.account_id = ?")
-                sql_params.append(filters['account_id'])
-            if filters.get('assign_status'):
-                conditions.append("ub.assign_status = ?")
-                sql_params.append(filters['assign_status'])
-            if filters.get('merge_status'):
-                conditions.append("ba.merge_status = ?")
-                sql_params.append(filters['merge_status'])
-            if filters.get('category_id'):
-                conditions.append("ub.category_id = ?")
-                sql_params.append(filters['category_id'])
-            if filters.get('keyword'):
-                conditions.append("(ub.counterparty LIKE ? OR ub.product_desc LIKE ? OR ub.remark LIKE ?)")
-                kw = f"%{filters['keyword']}%"
-                sql_params.extend([kw, kw, kw])
-            if filters.get('is_deleted') is not None:
-                conditions[0] = f"ub.is_deleted = {int(filters['is_deleted'])}"
-
-        has_merge_filter = filters.get('merge_status') if filters else False
+        where, sql_params = self._build_bill_conditions(filters)
+        has_merge_filter = filters.get('merge_status')
         join_clause = " LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id " if has_merge_filter else ""
-
-        where = " AND ".join(conditions)
         offset = (page - 1) * page_size
 
         total = self.dal.fetch_one(
             f"SELECT COUNT(*) as cnt FROM unified_bills ub{join_clause} WHERE {where}",
             tuple(sql_params),
         )['cnt']
+
+        summary_row = self.dal.fetch_one(
+            f"SELECT "
+            f"COALESCE(SUM(CASE WHEN ub.direction = 'income' THEN ub.amount_cents ELSE 0 END), 0) AS income, "
+            f"COALESCE(SUM(CASE WHEN ub.direction = 'expense' THEN ub.amount_cents ELSE 0 END), 0) AS expense "
+            f"FROM unified_bills ub{join_clause} WHERE {where}",
+            tuple(sql_params),
+        )
+        summary = {
+            'income': summary_row['income'] if summary_row else 0,
+            'expense': summary_row['expense'] if summary_row else 0,
+        }
 
         rows = self.dal.fetch_all(
             f"SELECT ub.*, ba.merge_status, ba.transfer_link_id, ba.is_credit, "
@@ -740,7 +798,179 @@ class ApiBridge:
             tuple(sql_params) + (page_size, offset),
         )
 
-        return self.ok({'total': total, 'list': [dict(r) for r in rows]})
+        return self.ok({'total': total, 'list': [dict(r) for r in rows], 'summary': summary})
+
+    def create_bill(self, params=None) -> dict:
+        fields = (params or {}).get('fields') or {}
+        required = ('trade_time', 'trade_type', 'direction', 'amount_cents')
+        for key in required:
+            if fields.get(key) in (None, ''):
+                return self.err(f'缺少必填字段: {key}')
+
+        trade_type = self._normalize_trade_type(fields.get('trade_type'))
+        if trade_type not in VALID_TRADE_TYPES:
+            return self.err('交易类型无效')
+        direction = fields.get('direction')
+        if direction not in ('income', 'expense', 'neutral'):
+            return self.err('收支方向无效')
+        try:
+            amount_cents = int(fields.get('amount_cents'))
+        except (TypeError, ValueError):
+            return self.err('金额无效')
+        if amount_cents <= 0:
+            return self.err('金额必须大于0')
+
+        now = self._now()
+        batch_id = f"manual:{uuid.uuid4()}"
+        channel_trade_no = fields.get('channel_trade_no') or f"MANUAL_{uuid.uuid4().hex}"
+
+        try:
+            with self.dal.transaction():
+                existing = self.dal.fetch_one(
+                    "SELECT id FROM unified_bills WHERE channel = ? AND channel_trade_no = ?",
+                    ('manual', channel_trade_no),
+                )
+                if existing:
+                    return self.err('交易流水号已存在')
+
+                account_id, role_id, assign_status = self._resolve_bill_assignment(
+                    fields.get('account_id'), fields.get('role_id')
+                )
+                category_id = self._validate_existing_id('bill_categories', fields.get('category_id'))
+                bill_data = {
+                    'channel': 'manual',
+                    'trade_time': fields.get('trade_time'),
+                    'trade_type': trade_type,
+                    'direction': direction,
+                    'amount_cents': amount_cents,
+                    'counterparty': fields.get('counterparty', ''),
+                    'product_desc': fields.get('product_desc', ''),
+                    'payment_method': fields.get('payment_method', ''),
+                    'status': fields.get('status', ''),
+                    'channel_trade_no': channel_trade_no,
+                    'remark': fields.get('remark', ''),
+                    'account_id': account_id,
+                    'role_id': role_id,
+                    'category_id': category_id,
+                    'assign_status': assign_status,
+                    'is_system': 0,
+                    'batch_id': batch_id,
+                    'is_manual_edited': 1,
+                    'created_at': now,
+                    'updated_at': now,
+                }
+                if category_id:
+                    bill_data.update({
+                        'is_category_manual_edited': 1,
+                        'category_source': 'manual',
+                        'category_score': 0,
+                        'category_rule_id': None,
+                    })
+
+                bill_id = self.dal.insert('unified_bills', bill_data)
+                imported_bill = {**bill_data, 'id': bill_id}
+                self.dal.insert('source_bills', {
+                    'bill_id': bill_id,
+                    'channel': 'manual',
+                    'raw_json': json.dumps({
+                        'source': 'manual_create',
+                        'version': 1,
+                        'fields': fields,
+                    }, ensure_ascii=False, cls=DateTimeEncoder),
+                    'created_at': now,
+                })
+                self._apply_accounting_pipeline(imported_bill, now)
+
+                if not category_id:
+                    from modules.categorizer import CategoryService
+                    category_service = CategoryService(self.dal)
+                    category_result = category_service.categorize_bill(bill_id, bill=imported_bill)
+                    category_service.apply_result(bill_id, category_result)
+
+            return self.ok({'bill_id': bill_id})
+        except Exception as e:
+            return self.err(f'新增账单失败: {e}')
+
+    def export_bills(self, params=None) -> dict:
+        filters = (params or {}).get('filters') or {}
+        where, sql_params = self._build_bill_conditions(filters)
+        try:
+            import webview
+            import openpyxl
+            from openpyxl.utils import get_column_letter
+
+            window = webview.windows[0]
+            result = window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=f"账单导出_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                file_types=('Excel 文件 (*.xlsx)', '所有文件 (*.*)'),
+            )
+            if not result:
+                return self.ok({'path': '', 'count': 0, 'cancelled': True}, '已取消导出')
+            export_path = result if isinstance(result, str) else result[0]
+            if not export_path.lower().endswith('.xlsx'):
+                export_path += '.xlsx'
+
+            rows = self.dal.fetch_all(
+                f"SELECT ub.*, ba.merge_status, ba.transfer_link_id, ba.is_credit, "
+                f"bc.name AS category_name, r.name AS role_name, a.account_name "
+                f"FROM unified_bills ub "
+                f"LEFT JOIN bill_accounting ba ON ub.id = ba.bill_id "
+                f"LEFT JOIN bill_categories bc ON ub.category_id = bc.id "
+                f"LEFT JOIN roles r ON ub.role_id = r.id "
+                f"LEFT JOIN accounts a ON ub.account_id = a.id "
+                f"WHERE {where} ORDER BY ub.trade_time DESC",
+                tuple(sql_params),
+            )
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = 'bills'
+            headers = [
+                'channel', 'trade_time', 'trade_type', 'direction', 'amount_cents', 'amount_yuan',
+                'counterparty', 'product_desc', 'payment_method', 'status', 'channel_trade_no', 'remark',
+                'account_id', 'account_name', 'role_id', 'role_name', 'category_id', 'category_name',
+                'assign_status', 'is_manual_edited', 'is_category_manual_edited', 'category_source',
+                'is_system', 'merge_status', 'channel_label', 'trade_type_label', 'direction_label',
+            ]
+            ws.append(headers)
+            channel_labels = {'wechat': '微信', 'alipay': '支付宝', 'ccb': '建行', 'manual': '手工记账'}
+            trade_type_labels = {
+                'consumption': '消费', 'credit_consumption': '信用消费', 'refund': '退款',
+                'transfer_out': '转出', 'transfer_in': '转入', 'repayment': '还款',
+                'repayment_mirror': '还款镜像', 'fee': '手续费', 'topup': '充值',
+                'withdrawal': '提现', 'investment': '理财',
+                'other_income': '其他收入', 'other_expense': '其他支出', 'other': '其他',
+            }
+            direction_labels = {'income': '收入', 'expense': '支出', 'neutral': '中性'}
+            for row in rows:
+                d = dict(row)
+                ws.append([
+                    d.get('channel'), d.get('trade_time'), d.get('trade_type'), d.get('direction'),
+                    d.get('amount_cents'), (d.get('amount_cents') or 0) / 100,
+                    d.get('counterparty'), d.get('product_desc'), d.get('payment_method'), d.get('status'),
+                    d.get('channel_trade_no'), d.get('remark'), d.get('account_id'), d.get('account_name'),
+                    d.get('role_id'), d.get('role_name'), d.get('category_id'), d.get('category_name'),
+                    d.get('assign_status'), d.get('is_manual_edited'), d.get('is_category_manual_edited'),
+                    d.get('category_source'), d.get('is_system'), d.get('merge_status'),
+                    channel_labels.get(d.get('channel'), d.get('channel')),
+                    trade_type_labels.get(d.get('trade_type'), d.get('trade_type')),
+                    direction_labels.get(d.get('direction'), d.get('direction')),
+                ])
+            for col in range(1, len(headers) + 1):
+                ws.column_dimensions[get_column_letter(col)].width = 16
+
+            meta = wb.create_sheet('__meta__')
+            meta.append(['key', 'value'])
+            meta.append(['format', 'all_wallet_manager_export'])
+            meta.append(['version', '1'])
+            meta.append(['exported_at', self._now()])
+            meta.append(['filters_json', json.dumps(filters, ensure_ascii=False, cls=DateTimeEncoder)])
+            wb.save(export_path)
+            wb.close()
+            return self.ok({'path': export_path, 'count': len(rows)})
+        except Exception as e:
+            return self.err(f'导出失败: {e}')
 
     def get_bill_detail(self, params=None) -> dict:
         bill_id = (params or {}).get('bill_id')
@@ -799,6 +1029,9 @@ class ApiBridge:
                 return self.err('交易类型无效')
             else:
                 data['trade_type'] = trade_type
+
+        if 'direction' in data and data.get('direction') not in ('income', 'expense', 'neutral'):
+            return self.err('收支方向无效')
 
         if 'category_id' in data:
             data['is_category_manual_edited'] = 1
@@ -934,12 +1167,16 @@ class ApiBridge:
             "SELECT ba.transfer_link_id, "
             "out_b.id AS out_bill_id, out_b.trade_time AS out_trade_time, out_b.amount_cents AS out_amount_cents, "
             "out_b.counterparty AS out_counterparty, out_b.channel AS out_channel, out_b.remark AS out_remark, "
+            "out_b.account_id AS out_account_id, out_a.account_name AS out_account_name, "
             "in_b.id AS in_bill_id, in_b.trade_time AS in_trade_time, in_b.amount_cents AS in_amount_cents, "
-            "in_b.counterparty AS in_counterparty, in_b.channel AS in_channel, in_b.remark AS in_remark "
+            "in_b.counterparty AS in_counterparty, in_b.channel AS in_channel, in_b.remark AS in_remark, "
+            "in_b.account_id AS in_account_id, in_a.account_name AS in_account_name "
             "FROM bill_accounting ba "
             "JOIN unified_bills out_b ON ba.bill_id = out_b.id AND out_b.direction = 'expense' "
             "JOIN bill_accounting ba2 ON ba.transfer_link_id = ba2.transfer_link_id "
             "JOIN unified_bills in_b ON ba2.bill_id = in_b.id AND in_b.direction = 'income' "
+            "LEFT JOIN accounts out_a ON out_b.account_id = out_a.id "
+            "LEFT JOIN accounts in_a ON in_b.account_id = in_a.id "
             "WHERE ba.transfer_link_id IS NOT NULL AND ba.transfer_link_id != '' "
             "AND out_b.trade_type = 'transfer_out' "
             "AND in_b.trade_type = 'transfer_in' "
@@ -972,6 +1209,8 @@ class ApiBridge:
         from modules.accounting.transfer_pairer import TransferPairer
         pairer = TransferPairer(self.dal)
         result = pairer.confirm_pair(out_id, in_id)
+        if not result.get('success'):
+            return self.err(result.get('message', '配对失败'))
         return self.ok(result)
 
     def reject_transfer_pair(self, params=None) -> dict:
@@ -1838,6 +2077,25 @@ class ApiBridge:
         success = self.snapshot.delete_snapshot(snapshot_id)
         return self.ok() if success else self.err('删除失败')
 
+    def create_snapshot(self, params=None) -> dict:
+        description = ((params or {}).get('description') or '').strip()
+        if not description:
+            description = f"手动快照 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        bill_ids = self.dal.fetch_all(
+            "SELECT id FROM unified_bills WHERE is_deleted = 0 AND is_system = 0"
+        )
+        if not bill_ids:
+            return self.err('暂无可创建快照的账单')
+        ids = [r['id'] for r in bill_ids]
+        snapshot_id = self.snapshot.create_snapshot('manual', description, ids)
+        self.snapshot.finalize_snapshot(snapshot_id, ids)
+        return self.ok({
+            'snapshot_id': snapshot_id,
+            'bill_count': len(ids),
+            'description': description,
+            'snapshot_type': 'manual',
+        })
+
     def cleanup_source_bills(self, params=None) -> dict:
         before_date = (params or {}).get('before_date')
         deleted = self.dal.delete(
@@ -1892,13 +2150,14 @@ class ApiBridge:
                 all_bill_ids = [b['id'] for b in all_bills]
                 if all_bill_ids:
                     self._handle_merge_group_cascade(all_bill_ids)
+                self.dal.execute("DELETE FROM transfer_pair_decisions")
                 self.dal.execute("DELETE FROM bill_accounting")
                 self.dal.execute("DELETE FROM source_bills")
                 self.dal.execute("DELETE FROM unified_bills")
-                self.dal.execute("DELETE FROM import_batches")
                 self.dal.execute(
                     "UPDATE collection_records SET status = 'pending', batch_id = NULL, parse_result = NULL"
                 )
+                self.dal.execute("DELETE FROM import_batches")
             return self.ok({'message': '所有账单数据已清除'})
         except Exception as e:
             return self.err(f'清除失败: {e}')
@@ -1942,6 +2201,10 @@ class ApiBridge:
 
                     if bill_ids:
                         placeholders = ', '.join(['?' for _ in bill_ids])
+                        self.dal.execute(
+                            f"DELETE FROM transfer_pair_decisions WHERE out_bill_id IN ({placeholders}) OR in_bill_id IN ({placeholders})",
+                            tuple(bill_ids) + tuple(bill_ids)
+                        )
                         self.dal.execute(
                             f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
                             tuple(bill_ids)
@@ -2261,6 +2524,10 @@ class ApiBridge:
                 self._handle_merge_group_cascade(bill_ids)
 
                 placeholders = ', '.join(['?' for _ in bill_ids])
+                self.dal.execute(
+                    f"DELETE FROM transfer_pair_decisions WHERE out_bill_id IN ({placeholders}) OR in_bill_id IN ({placeholders})",
+                    tuple(bill_ids) + tuple(bill_ids),
+                )
                 self.dal.execute(
                     f"DELETE FROM bill_accounting WHERE bill_id IN ({placeholders})",
                     tuple(bill_ids),

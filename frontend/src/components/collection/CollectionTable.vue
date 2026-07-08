@@ -51,6 +51,7 @@
               <el-option label="微信" value="wechat" />
               <el-option label="支付宝" value="alipay" />
               <el-option label="建行" value="ccb" />
+              <el-option label="自导出格式" value="self_export" />
             </el-select>
           </template>
           <el-tag v-else size="small" :type="channelTagType(row.channel)">

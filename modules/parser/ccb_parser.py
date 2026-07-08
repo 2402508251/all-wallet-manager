@@ -118,6 +118,9 @@ class CCBParser(BaseParser):
             trade_type = self.enum_mapper.map_trade_type(
                 trade_type_raw, 'ccb'
             )
+            trade_type = self.enum_mapper.finalize_trade_type(
+                trade_type, amount_result['direction']
+            )
 
         product_desc = mapped.get('product_desc', '')
         if product_desc:

@@ -5,14 +5,20 @@
         {{ formatDateTime(row.out_bill?.trade_time) }}
       </template>
     </el-table-column>
-    <el-table-column label="转出账户" min-width="140" show-overflow-tooltip>
+    <el-table-column label="转出账户" min-width="160" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.out_bill?.counterparty || '-' }}
+        <div class="account-cell">
+          <strong>{{ row.out_account_name || '-' }}</strong>
+          <span>{{ row.out_counterparty || row.out_bill?.counterparty || '-' }}</span>
+        </div>
       </template>
     </el-table-column>
-    <el-table-column label="转入候选" min-width="140" show-overflow-tooltip>
+    <el-table-column label="转入候选账户" min-width="160" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.in_bill?.counterparty || '-' }}
+        <div class="account-cell">
+          <strong>{{ row.in_account_name || '-' }}</strong>
+          <span>{{ row.in_counterparty || row.in_bill?.counterparty || '-' }}</span>
+        </div>
       </template>
     </el-table-column>
     <el-table-column label="金额" width="100" align="right">
@@ -20,7 +26,7 @@
         <span class="amount-expense">{{ formatSignedYuan(row.out_bill?.amount_cents || 0, 'expense') }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="匹配度" width="140">
+    <el-table-column label="匹配依据" width="150">
       <template #default="{ row }">
         <el-tag size="small" type="warning">{{ row.time_diff_minutes }} 分钟内</el-tag>
       </template>
@@ -47,3 +53,15 @@ defineProps({
 
 defineEmits(['confirm', 'reject'])
 </script>
+
+<style scoped>
+.account-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.account-cell span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+</style>

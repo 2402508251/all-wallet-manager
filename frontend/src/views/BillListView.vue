@@ -12,7 +12,24 @@
       </el-button>
     </section>
 
-    <BillFilter @search="handleSearch" @reset="handleReset" />
+    <BillFilter :filter="billStore.filter" @search="handleSearch" @reset="handleReset" />
+
+    <div class="bill-summary card-box">
+      <div>
+        <div class="section-subtitle">当前条件汇总</div>
+        <div class="bill-summary-total">共 {{ billStore.total }} 条</div>
+      </div>
+      <div class="bill-summary-metrics">
+        <div class="bill-summary-item">
+          <span>总收入</span>
+          <strong class="amount-income">{{ formatYuan(billStore.summary.income) }}</strong>
+        </div>
+        <div class="bill-summary-item">
+          <span>总支出</span>
+          <strong class="amount-expense">{{ formatYuan(billStore.summary.expense) }}</strong>
+        </div>
+      </div>
+    </div>
 
     <BillTable
       :bills="billStore.bills"
@@ -20,6 +37,12 @@
       :loading="billStore.loading"
       @row-click="handleRowClick"
       @batch-delete="handleBatchDelete"
+      @create="showCreateDialog = true"
+    />
+
+    <BillCreateDialog
+      v-model="showCreateDialog"
+      @created="handleCreateBill"
     />
 
     <BillDetailDrawer
@@ -61,11 +84,14 @@ import { Delete } from '@element-plus/icons-vue'
 import { useBillStore } from '@/stores/bill'
 import BillFilter from '@/components/bill/BillFilter.vue'
 import BillTable from '@/components/bill/BillTable.vue'
+import BillCreateDialog from '@/components/bill/BillCreateDialog.vue'
 import BillDetailDrawer from '@/components/bill/BillDetailDrawer.vue'
+import { formatYuan } from '@/utils/formatters'
 
 const billStore = useBillStore()
 const route = useRoute()
 const selectedBillId = ref(null)
+const showCreateDialog = ref(false)
 const showRecycleBin = ref(false)
 const deletedBills = ref([])
 const recycleLoading = ref(false)
@@ -98,6 +124,17 @@ async function handleBatchDelete(ids) {
     ElMessage.success(`已删除 ${ids.length} 条账单（移入回收站）`)
   } catch (e) {
     ElMessage.error(e.message || '删除失败')
+  }
+}
+
+async function handleCreateBill(fields) {
+  try {
+    const data = await billStore.createBill(fields)
+    showCreateDialog.value = false
+    selectedBillId.value = data.bill_id
+    ElMessage.success('手工账单已新增')
+  } catch (e) {
+    ElMessage.error(e.message || '新增失败')
   }
 }
 
@@ -161,5 +198,51 @@ watch(showRecycleBin, (val) => {
   display: flex;
   justify-content: space-between;
   margin-top: var(--spacing-md);
+}
+
+.bill-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.bill-summary-total {
+  margin-top: 2px;
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.bill-summary-metrics {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.bill-summary-item {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.bill-summary-item span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
+.bill-summary-item strong {
+  font-size: var(--font-size-large);
+}
+
+@media (max-width: 768px) {
+  .bill-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .bill-summary-item {
+    text-align: left;
+  }
 }
 </style>

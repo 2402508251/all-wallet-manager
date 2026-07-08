@@ -2,6 +2,8 @@ export const channelOptions = {
   wechat: { label: '微信', tag: 'success' },
   alipay: { label: '支付宝', tag: 'primary' },
   ccb: { label: '建行', tag: 'warning' },
+  manual: { label: '手工记账', tag: 'info' },
+  self_export: { label: '自导出格式', tag: 'primary' },
   unknown: { label: '未知', tag: 'info' },
 }
 
@@ -23,6 +25,8 @@ export const tradeTypeOptions = {
   topup: { label: '充值', tag: 'primary' },
   withdrawal: { label: '提现', tag: 'warning' },
   investment: { label: '理财', tag: 'success' },
+  other_income: { label: '其他收入', tag: 'success' },
+  other_expense: { label: '其他支出', tag: 'warning' },
   other: { label: '其他', tag: 'info' },
 }
 

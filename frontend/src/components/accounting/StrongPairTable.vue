@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="pairs" size="small" empty-text="暂无自动配对记录">
+  <el-table :data="pairs" size="small" empty-text="暂无配对记录">
     <el-table-column label="转出时间" width="140">
       <template #default="{ row }">
         {{ formatDateTime(row.out_trade_time) }}
@@ -19,14 +19,20 @@
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="转出账户" min-width="140" show-overflow-tooltip>
+    <el-table-column label="转出账户" min-width="160" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.out_counterparty || '-' }}
+        <div class="account-cell">
+          <strong>{{ row.out_account_name || '-' }}</strong>
+          <span>{{ row.out_counterparty || '-' }}</span>
+        </div>
       </template>
     </el-table-column>
-    <el-table-column label="转入账户" min-width="140" show-overflow-tooltip>
+    <el-table-column label="转入账户" min-width="160" show-overflow-tooltip>
       <template #default="{ row }">
-        {{ row.in_counterparty || '-' }}
+        <div class="account-cell">
+          <strong>{{ row.in_account_name || '-' }}</strong>
+          <span>{{ row.in_counterparty || '-' }}</span>
+        </div>
       </template>
     </el-table-column>
     <el-table-column label="金额" width="100" align="right">
@@ -34,9 +40,9 @@
         <span class="amount-expense">{{ formatSignedYuan(row.out_amount_cents || 0, 'expense') }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="配对依据" width="150">
+    <el-table-column label="配对状态" width="110">
       <template #default="{ row }">
-        <el-tag size="small" type="success">{{ row.transfer_link_id ? '自动配对成功' : '已确认' }}</el-tag>
+        <el-tag size="small" type="success">已配对</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="配对号" min-width="180" show-overflow-tooltip>
@@ -59,3 +65,15 @@ defineProps({
   pairs: { type: Array, default: () => [] },
 })
 </script>
+
+<style scoped>
+.account-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.account-cell span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+</style>

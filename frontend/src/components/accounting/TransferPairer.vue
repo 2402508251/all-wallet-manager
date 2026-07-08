@@ -2,8 +2,8 @@
   <div class="transfer-pairer">
     <div class="action-bar">
       <div>
-        <div class="section-title">已自动配对</div>
-        <div class="section-subtitle">强匹配 {{ strongPairs.length }} 条，基于备注或单号线索自动生成转账配对</div>
+        <div class="section-title">已配对</div>
+        <div class="section-subtitle">系统账户之间的已确认转账配对，基于账户、金额、方向、时间及备注/单号线索生成</div>
       </div>
     </div>
     <StrongPairTable :pairs="strongPairs" />
@@ -13,7 +13,7 @@
     <div class="action-bar">
       <div>
         <div class="section-title">待确认配对</div>
-        <div class="section-subtitle">从未配对的转出记录中提取弱匹配候选，需要手动确认</div>
+        <div class="section-subtitle">从未配对的系统账户转出记录中提取候选，需要手动确认</div>
       </div>
     </div>
     <WeakPairTable

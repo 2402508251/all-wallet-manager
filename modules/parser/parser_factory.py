@@ -5,6 +5,7 @@ from .base_parser import BaseParser
 from .wechat_parser import WechatParser
 from .alipay_parser import AlipayParser
 from .ccb_parser import CCBParser
+from .self_export_parser import SelfExportParser
 
 
 class ParserFactory:
@@ -12,6 +13,7 @@ class ParserFactory:
         'wechat': WechatParser,
         'alipay': AlipayParser,
         'ccb': CCBParser,
+        'self_export': SelfExportParser,
     }
 
     @staticmethod

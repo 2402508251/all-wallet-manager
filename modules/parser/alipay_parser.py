@@ -139,13 +139,10 @@ class AlipayParser(BaseParser):
         trade_type_raw = mapped.get('trade_type_raw', '')
         trade_type = trade_type_raw
         if self.enum_mapper:
-            direction = amount_result['direction']
             trade_type = self.enum_mapper.map_trade_type(
                 trade_type_raw, 'alipay',
                 payment_method=mapped.get('payment_method'),
             )
-            if trade_type_raw == '转账' and direction == 'income':
-                trade_type = 'transfer_in'
 
         status = mapped.get('status', '')
         if status == '交易关闭':
@@ -157,11 +154,17 @@ class AlipayParser(BaseParser):
             is_credit = self.enum_mapper.is_credit_consumption(
                 payment_method, 'alipay'
             )
+            if is_credit:
+                trade_type = 'credit_consumption'
+            else:
+                trade_type = self.enum_mapper.finalize_trade_type(
+                    trade_type, amount_result['direction']
+                )
 
         return {
             'channel': 'alipay',
             'trade_time': trade_time,
-            'trade_type': 'credit_consumption' if is_credit else trade_type,
+            'trade_type': trade_type,
             'direction': amount_result['direction'],
             'amount_cents': amount_result['amount_cents'],
             'counterparty': mapped.get('counterparty', ''),

@@ -8,6 +8,12 @@
         </div>
       </div>
       <div class="table-actions">
+        <el-button type="primary" size="small" @click="emit('create')">
+          手工记账
+        </el-button>
+        <el-button size="small" :loading="exporting" @click="handleExport">
+          导出 Excel
+        </el-button>
         <el-button
           v-if="selectedIds.length > 0"
           type="primary"
@@ -144,7 +150,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['row-click', 'batch-delete'])
+const emit = defineEmits(['row-click', 'batch-delete', 'create'])
 
 const billStore = useBillStore()
 const systemStore = useSystemStore()
@@ -155,6 +161,7 @@ const currentPageSize = ref(20)
 const reassignVisible = ref(false)
 const reassignAccountId = ref(null)
 const allAccounts = ref([])
+const exporting = ref(false)
 
 function handleSelectionChange(rows) {
   selectedIds.value = rows.map(r => r.id)
@@ -173,6 +180,22 @@ function handleBatchDelete() {
     emit('batch-delete', selectedIds.value)
     selectedIds.value = []
   }).catch(() => {})
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    const data = await billStore.exportBills()
+    if (data?.cancelled) {
+      ElMessage.info('已取消导出')
+    } else {
+      ElMessage.success(`已导出 ${data.count} 条账单：${data.path}`)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
 }
 
 async function handleBatchReassign() {
