@@ -251,19 +251,34 @@ class AccountExtractor:
                 if tag not in bank_account_tags:
                     bank_account_tags.add(tag)
                     name = f"支付宝-{account_suffix}-{pm_normalized}"
-                    bank_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+                    bank_accounts.append({
+                        'tag': tag,
+                        'name': name,
+                        'payment_method': pm_normalized,
+                        'payment_method_type': pm_type,
+                    })
             elif pm_type == 'credit':
                 tag = f"alipay-{account_suffix}-{pm_normalized}"
                 if tag not in credit_account_tags:
                     credit_account_tags.add(tag)
                     name = f"支付宝-{account_suffix}-{pm_normalized}"
-                    credit_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+                    credit_accounts.append({
+                        'tag': tag,
+                        'name': name,
+                        'payment_method': pm_normalized,
+                        'payment_method_type': pm_type,
+                    })
             elif pm_type == 'balance':
                 tag = f"alipay-{account_suffix}-{pm_normalized}"
                 if tag not in balance_account_tags:
                     balance_account_tags.add(tag)
                     name = f"支付宝-{account_suffix}-{pm_normalized}"
-                    balance_accounts.append({'tag': tag, 'name': name, 'payment_method': pm_normalized})
+                    balance_accounts.append({
+                        'tag': tag,
+                        'name': name,
+                        'payment_method': pm_normalized,
+                        'payment_method_type': pm_type,
+                    })
             elif pm_type == 'discount':
                 # 非真实付款统一一个账户
                 has_other_discount = True
@@ -280,6 +295,7 @@ class AccountExtractor:
                 'tag': f"alipay-{account_suffix}-优惠",
                 'name': f"支付宝-{account_suffix}-优惠",
                 'payment_method': '_discount_',
+                'payment_method_type': 'discount',
             })
 
         return {'account_suffix': account_suffix, 'accounts': accounts}

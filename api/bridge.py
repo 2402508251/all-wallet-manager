@@ -291,11 +291,14 @@ class ApiBridge:
 
             with self.dal.transaction():
                 payment_method_to_account = {}
+                balance_account_id = None
                 for acc in account_info.get('accounts', []):
                     account_id = self.get_or_create_account(
                         acc['tag'], acc['name'], channel, acc
                     )
                     payment_method_to_account[acc['payment_method']] = account_id
+                    if acc.get('payment_method_type') == 'balance' and balance_account_id is None:
+                        balance_account_id = account_id
 
                 for i, rec in enumerate(result.records):
                     existing = self.dal.fetch_one(
@@ -313,6 +316,17 @@ class ApiBridge:
                             if pm in payment_method or payment_method in pm:
                                 account_id = aid
                                 break
+                    if (
+                        not account_id
+                        and rec.get('channel') in ('wechat', 'alipay')
+                        and rec.get('direction') == 'income'
+                        and balance_account_id
+                    ):
+                        account_id = balance_account_id
+                        logger.info(
+                            "parse_collection assigned income bill to balance account: channel=%s trade_no=%s payment_method=%s account_id=%s",
+                            rec.get('channel'), rec.get('channel_trade_no'), payment_method, account_id,
+                        )
                     if not account_id and '_default_' in payment_method_to_account:
                         account_id = payment_method_to_account['_default_']
 
