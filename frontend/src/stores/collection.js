@@ -56,8 +56,9 @@ export const useCollectionStore = defineStore('collection', {
     },
 
     async setZipPassword(recordId, password) {
-      await call('set_zip_password', { record_id: recordId, password })
+      const data = await call('set_zip_password', { record_id: recordId, password })
       await this.loadCollections()
+      return data
     },
 
     async deleteCollectionRecords(recordIds) {

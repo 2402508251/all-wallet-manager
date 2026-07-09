@@ -43,6 +43,9 @@
         <el-tab-pane label="分类规则" name="keyword">
           <KeywordSetting />
         </el-tab-pane>
+        <el-tab-pane label="AI 设置" name="ai">
+          <AiSetting />
+        </el-tab-pane>
         <el-tab-pane label="数据管理" name="data">
           <DataManager />
         </el-tab-pane>
@@ -60,6 +63,7 @@ import AccountManager from '@/components/settings/AccountManager.vue'
 import CategoryManager from '@/components/settings/CategoryManager.vue'
 import EmailSetting from '@/components/settings/EmailSetting.vue'
 import KeywordSetting from '@/components/settings/KeywordSetting.vue'
+import AiSetting from '@/components/settings/AiSetting.vue'
 import DataManager from '@/components/settings/DataManager.vue'
 
 const activeTab = ref('family')
@@ -70,6 +74,7 @@ const settingItems = [
   { name: 'category', label: '分类管理', desc: '业务分类基础资料' },
   { name: 'email', label: '邮箱配置', desc: 'IMAP 同步与授权维护' },
   { name: 'keyword', label: '分类规则', desc: '关键词与匹配字段' },
+  { name: 'ai', label: 'AI 设置', desc: '模型配置、健康检查与任务记录' },
   { name: 'data', label: '数据管理', desc: '重解析、快照和清理' },
 ]
 </script>

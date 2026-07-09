@@ -13,6 +13,8 @@ export const useSystemStore = defineStore('system', {
     categoryMatchFields: [],
     snapshots: [],
     emails: [],
+    aiConfig: null,
+    aiTasks: [],
     currentFamilyId: null,
     currentRoleId: null,
     loading: false,
@@ -202,6 +204,33 @@ export const useSystemStore = defineStore('system', {
     async deleteEmail(configId) {
       await call('delete_email_config', { config_id: configId })
       await this.loadEmails()
+    },
+
+    // ─── AI 配置 ────────────────────────────
+    async loadAiConfig() {
+      this.aiConfig = await call('get_ai_config', {})
+      return this.aiConfig
+    },
+
+    async saveAiConfig(config) {
+      this.aiConfig = await call('save_ai_config', config)
+      return this.aiConfig
+    },
+
+    async testAiConnection() {
+      return await call('test_ai_connection', {})
+    },
+
+    async createAiMockTask(taskType = 'mock') {
+      const data = await call('create_ai_mock_task', { task_type: taskType })
+      await this.loadAiTasks()
+      return data
+    },
+
+    async loadAiTasks(options = {}) {
+      const data = await call('list_ai_tasks', options)
+      this.aiTasks = data.list || []
+      return this.aiTasks
     },
 
     // ─── 快照 ────────────────────────────

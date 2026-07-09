@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS collection_records (
     email_config_id INTEGER,
     file_name TEXT NOT NULL,
     file_path TEXT,
+    file_hash TEXT,
     channel TEXT,
     channel_source TEXT NOT NULL DEFAULT 'auto_detect',
     status TEXT NOT NULL DEFAULT 'pending',
@@ -241,6 +242,85 @@ CREATE TABLE IF NOT EXISTS snapshot_details (
     FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
 );
 
+CREATE TABLE IF NOT EXISTS ai_provider_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_type TEXT NOT NULL DEFAULT 'openai_compatible',
+    model_name TEXT NOT NULL,
+    api_base TEXT,
+    api_key_enc TEXT,
+    temperature REAL NOT NULL DEFAULT 0.2,
+    timeout_seconds INTEGER NOT NULL DEFAULT 60,
+    max_tokens INTEGER NOT NULL DEFAULT 2048,
+    enabled_tasks TEXT NOT NULL DEFAULT '[]',
+    is_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    input_payload_json TEXT,
+    context_payload_json TEXT,
+    result_payload_json TEXT,
+    error_message TEXT,
+    provider TEXT,
+    model_name TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_parser_rule_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    collection_record_id INTEGER,
+    file_name TEXT,
+    channel_hint TEXT,
+    rule_name TEXT,
+    parser_spec_json TEXT NOT NULL,
+    sample_preview_json TEXT,
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    reviewer_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES ai_tasks(id),
+    FOREIGN KEY (collection_record_id) REFERENCES collection_records(id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_category_rule_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    target_category_id INTEGER,
+    sample_fields_json TEXT,
+    suggestion_json TEXT NOT NULL,
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    reviewer_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES ai_tasks(id),
+    FOREIGN KEY (target_category_id) REFERENCES bill_categories(id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_report_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    request_text TEXT NOT NULL,
+    normalized_spec_json TEXT,
+    sql_template TEXT,
+    sql_params_json TEXT,
+    chart_config_json TEXT,
+    explanation TEXT,
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    reviewer_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES ai_tasks(id)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_channel_trade_no
     ON unified_bills(channel, channel_trade_no);
 CREATE INDEX IF NOT EXISTS idx_bills_trade_time ON unified_bills(trade_time);
@@ -267,6 +347,7 @@ CREATE INDEX IF NOT EXISTS idx_transfer_pair_decisions_decision ON transfer_pair
 CREATE INDEX IF NOT EXISTS idx_source_bills_bill_id ON source_bills(bill_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_batch_id ON import_batches(batch_id);
 CREATE INDEX IF NOT EXISTS idx_collection_status ON collection_records(status);
+CREATE INDEX IF NOT EXISTS idx_collection_file_hash ON collection_records(source_type, email_config_id, file_hash);
 CREATE INDEX IF NOT EXISTS idx_snapshot_details_snapshot ON snapshot_details(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_details_bill ON snapshot_details(bill_id);
 CREATE INDEX IF NOT EXISTS idx_role_families_family_id ON role_families(family_id);

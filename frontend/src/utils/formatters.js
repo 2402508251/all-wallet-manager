@@ -47,6 +47,8 @@ export const collectionStatusOptions = {
   parsing: { label: '解析中', tag: 'warning' },
   parsed: { label: '已解析', tag: 'success' },
   error: { label: '失败', tag: 'danger' },
+  need_password: { label: '待密码', tag: 'warning' },
+  processed: { label: '已处理', tag: 'info' },
 }
 
 export function formatYuan(cents = 0, options = {}) {

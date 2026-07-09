@@ -15,6 +15,10 @@ pyzipper>=0.3
 # 加密
 pycryptodome>=3.19
 
+# AI 编排
+langchain>=0.2.0
+langchain-openai>=0.1.0
+
 # 金额运算（标准库 Decimal，无需额外依赖）
 # 邮件 IMAP（标准库 imaplib + email，无需额外依赖）
 # 压缩处理（标准库 zipfile，无需额外依赖）

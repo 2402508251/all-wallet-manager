@@ -53,8 +53,14 @@ async function handleConfirm() {
 
   submitting.value = true
   try {
-    await collectionStore.setZipPassword(recordId.value, password.value)
-    ElMessage.success('解压成功')
+    const data = await collectionStore.setZipPassword(recordId.value, password.value)
+    const extractedCount = data?.extracted_count || 0
+    const duplicateSkipped = data?.duplicate_skipped || 0
+    if (duplicateSkipped > 0) {
+      ElMessage.success(`解压成功，新增 ${extractedCount} 条记录，跳过 ${duplicateSkipped} 条重复记录`)
+    } else {
+      ElMessage.success(`解压成功，新增 ${extractedCount} 条记录`)
+    }
     visible.value = false
     emit('success')
   } catch (e) {

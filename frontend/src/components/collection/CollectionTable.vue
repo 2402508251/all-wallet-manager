@@ -68,17 +68,15 @@
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <template v-if="row.status === 'pending' || row.status === 'error'">
-            <template v-if="isZipFile(row.file_name) && !row.is_extracted">
-              <el-button link type="warning" size="small" @click="$emit('set-password', row)">
-                输入密码
-              </el-button>
-            </template>
-            <template v-else>
-              <el-button link type="primary" size="small" @click="$emit('parse', row)">
-                解析
-              </el-button>
-            </template>
+          <template v-if="row.status === 'need_password'">
+            <el-button link type="warning" size="small" @click="$emit('set-password', row)">
+              输入密码
+            </el-button>
+          </template>
+          <template v-else-if="row.status === 'pending' || row.status === 'error'">
+            <el-button link type="primary" size="small" @click="$emit('parse', row)">
+              解析
+            </el-button>
           </template>
           <!-- 已解析的可以查看 -->
           <el-button
@@ -192,10 +190,6 @@ function statusType(status) {
 
 function isZipFile(filename) {
   return filename?.toLowerCase().endsWith('.zip')
-}
-
-function isPdfFile(filename) {
-  return filename?.toLowerCase().endsWith('.pdf')
 }
 </script>
 

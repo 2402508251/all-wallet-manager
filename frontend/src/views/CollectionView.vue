@@ -39,10 +39,12 @@
           <el-button
             v-if="emailConfigs.length > 0"
             type="primary"
+            :loading="syncing"
+            :disabled="syncing"
             @click="handleSyncBills"
           >
-            <el-icon><Refresh /></el-icon>
-            同步账单
+            <el-icon v-if="!syncing"><Refresh /></el-icon>
+            {{ syncing ? '同步中...' : '同步账单' }}
           </el-button>
           </div>
         </div>
@@ -89,6 +91,7 @@ const collectionStore = useCollectionStore()
 const emailConfigRef = ref(null)
 const zipPwdRef = ref(null)
 const parseResultRef = ref(null)
+const syncing = ref(false)
 
 const emailConfigs = computed(() => collectionStore.emailConfigs)
 const pendingCount = computed(() => {
@@ -131,15 +134,37 @@ async function handleSyncBills() {
     return
   }
 
-  for (const config of emailConfigs.value) {
-    try {
-      const data = await collectionStore.fetchEmailBills(config.id)
-      if (data?.task_id) {
-        collectionStore.startTaskListeners(data.task_id)
+  syncing.value = true
+  try {
+    let hasSyncResult = false
+    for (const config of emailConfigs.value) {
+      try {
+        const data = await collectionStore.fetchEmailBills(config.id)
+        if (data?.task_id) {
+          collectionStore.startTaskListeners(data.task_id)
+          continue
+        }
+
+        hasSyncResult = true
+        const downloaded = data?.downloaded || 0
+        if (downloaded > 0) {
+          ElMessage.success(`${config.email_addr}: ${data.message || `已拉取 ${downloaded} 个账单附件`}`)
+        } else if (data?.message) {
+          ElMessage.info(`${config.email_addr}: ${data.message}`)
+        } else {
+          ElMessage.info(`${config.email_addr}: 未发现新账单附件`)
+        }
+      } catch (e) {
+        ElMessage.error(`${config.email_addr}: ${e.message}`)
       }
-    } catch (e) {
-      ElMessage.error(`${config.email_addr}: ${e.message}`)
     }
+
+    if (hasSyncResult) {
+      await collectionStore.loadCollections()
+      await collectionStore.loadEmailConfigs()
+    }
+  } finally {
+    syncing.value = false
   }
 }
 

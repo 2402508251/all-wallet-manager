@@ -63,8 +63,13 @@ async function handleSelectFiles() {
   uploading.value = true
   try {
     const result = await collectionStore.uploadFiles(files)
-    const count = result?.count || files.length
-    ElMessage.success(`成功添加 ${count} 条采集记录`)
+    const count = result?.count || 0
+    const duplicateSkipped = result?.duplicate_skipped || 0
+    if (duplicateSkipped > 0) {
+      ElMessage.success(`成功添加 ${count} 条采集记录，跳过 ${duplicateSkipped} 条重复记录`)
+    } else {
+      ElMessage.success(`成功添加 ${count} 条采集记录`)
+    }
     emit('upload-success')
   } catch (e) {
     ElMessage.error(e.message || '添加采集记录失败')

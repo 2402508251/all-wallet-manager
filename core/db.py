@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 7
 
     def __init__(self, db_path: str, init_sql_path: str | None = None):
         self.db_path = db_path
