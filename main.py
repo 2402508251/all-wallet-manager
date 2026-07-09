@@ -7,8 +7,10 @@ import sys
 import threading
 import http.server
 import functools
+import shutil
 
 import webview
+import webview.platforms.win32  # Nuitka hidden import for pywebview WinForms backend
 
 from api.bridge import ApiBridge
 from core.db import DatabaseManager
@@ -22,25 +24,44 @@ def _start_static_server(directory: str, port: int):
         httpd.serve_forever()
 
 
+def _copy_default_configs(resource_config_dir: str, config_dir: str):
+    os.makedirs(config_dir, exist_ok=True)
+    if not os.path.isdir(resource_config_dir):
+        return
+
+    for file_name in os.listdir(resource_config_dir):
+        if not file_name.endswith('.json'):
+            continue
+        source_path = os.path.join(resource_config_dir, file_name)
+        target_path = os.path.join(config_dir, file_name)
+        if not os.path.exists(target_path):
+            shutil.copy2(source_path, target_path)
+
+
 def main():
     if getattr(sys, 'frozen', False):
         app_dir = os.path.dirname(sys.executable)
+        resource_dir = os.path.dirname(os.path.abspath(__file__))
     else:
         app_dir = os.path.dirname(os.path.abspath(__file__))
+        resource_dir = app_dir
 
     db_path = os.path.join(app_dir, 'data', 'wallet.db')
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    db_manager = DatabaseManager(db_path)
+    init_sql_path = os.path.join(resource_dir, 'scripts', 'init_db.sql')
+    db_manager = DatabaseManager(db_path, init_sql_path)
     db_manager.initialize()
 
     from core.config_manager import ConfigManager
     config_dir = os.path.join(app_dir, 'config')
+    resource_config_dir = os.path.join(resource_dir, 'config')
+    _copy_default_configs(resource_config_dir, config_dir)
     config_manager = ConfigManager(config_dir)
 
     api = ApiBridge(db_manager, config_manager, app_dir)
 
-    dist_dir = os.path.join(app_dir, 'frontend', 'dist')
-    dev_dir = os.path.join(app_dir, 'frontend', 'src')
+    dist_dir = os.path.join(resource_dir, 'frontend', 'dist')
+    dev_dir = os.path.join(resource_dir, 'frontend', 'src')
 
     if os.path.isfile(os.path.join(dist_dir, 'index.html')):
         frontend_dir = dist_dir

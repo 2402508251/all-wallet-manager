@@ -5,7 +5,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+main.dist/
 *.spec
+nuitka-crash-report.xml
 
 # Virtual environment
 venv/
@@ -56,3 +58,4 @@ scripts/*
 # IDE assistant files
 find-skills.md
 CLAUDE.md
+AGENTS.md

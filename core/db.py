@@ -16,8 +16,11 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     SCHEMA_VERSION = 6
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, init_sql_path: str | None = None):
         self.db_path = db_path
+        self.init_sql_path = init_sql_path or os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'scripts', 'init_db.sql'
+        )
         self._lock = threading.RLock()
         self._conn = None
 
@@ -100,8 +103,7 @@ class DatabaseManager:
 
     def _create_tables(self) -> None:
         conn = self.get_connection()
-        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts', 'init_db.sql')
-        with open(script_path, 'r', encoding='utf-8') as f:
+        with open(self.init_sql_path, 'r', encoding='utf-8') as f:
             conn.executescript(f.read())
 
     def _insert_default_data(self) -> None:
