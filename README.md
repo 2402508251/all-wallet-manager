@@ -32,7 +32,8 @@
 
 ### 方式一：直接运行（推荐）
 
-双击 `main.exe` 启动应用
+从 [GitHub Releases 发布页](https://github.com/2402508251/all-wallet-manager/releases) 下载发布包。
+解压后双击 `all-wallet-manager`目录下的`main.exe` 启动应用
 
 ### 方式二：源码运行
 
