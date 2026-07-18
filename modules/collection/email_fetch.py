@@ -8,6 +8,7 @@ import os
 import uuid
 
 from .channel_detector import ChannelDetector
+from .file_upload import FileUploadHandler
 from core.config_manager import ConfigManager
 from core.dal import DAL
 from core.crypto_utils import CredentialEncryptor
@@ -128,6 +129,15 @@ class EmailFetcher:
                         with open(save_path, 'wb') as f:
                             f.write(payload)
 
+                        if ext == '.zip':
+                            attachments.append({
+                                'file_name': filename,
+                                'file_path': save_path,
+                                'file_hash': file_hash,
+                                'is_zip': True,
+                            })
+                            continue
+
                         detection = self.detector.detect(filename)
                         detector_channel = detection['channel']
                         if detector_channel != 'unknown':
@@ -150,8 +160,21 @@ class EmailFetcher:
                         continue
 
                     current_record_ids = []
+                    zip_handler = FileUploadHandler(self.app_dir, self.dal)
                     with self.dal.transaction():
                         for attachment in attachments:
+                            if attachment.get('is_zip'):
+                                before = zip_handler.duplicate_skipped
+                                zip_record_ids = zip_handler.handle_zip_file(
+                                    attachment['file_path'],
+                                    attachment['file_name'],
+                                    source_type='email',
+                                    email_config_id=config_id,
+                                )
+                                duplicate_skipped += zip_handler.duplicate_skipped - before
+                                current_record_ids.extend(zip_record_ids)
+                                continue
+
                             if self._email_file_exists(config_id, attachment['file_hash']):
                                 duplicate_skipped += 1
                                 continue

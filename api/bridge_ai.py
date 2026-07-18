@@ -59,3 +59,40 @@ class AiBridgeMixin:
         except Exception as e:
             logger.exception("list_ai_tasks failed")
             return self.err(str(e))
+
+    def _category_suggestion_service(self):
+        from modules.ai.category_suggestion_service import CategorySuggestionService
+        return CategorySuggestionService(self.dal, self.encryptor)
+
+    def generate_category_rule_suggestion(self, params=None) -> dict:
+        try:
+            data = self._category_suggestion_service().generate_suggestion(params or {})
+            return self.ok(data, 'AI 分类关键词建议已生成')
+        except Exception as e:
+            logger.exception("generate_category_rule_suggestion failed")
+            return self.err(str(e))
+
+    def list_category_rule_suggestions(self, params=None) -> dict:
+        try:
+            data = self._category_suggestion_service().list_suggestions(params or {})
+            return self.ok(data)
+        except Exception as e:
+            logger.exception("list_category_rule_suggestions failed")
+            return self.err(str(e))
+
+    @audit_log('approve_category_rule_suggestion')
+    def approve_category_rule_suggestion(self, params=None) -> dict:
+        try:
+            data = self._category_suggestion_service().approve_suggestion(params or {})
+            return self.ok(data, 'AI 分类关键词建议已应用')
+        except Exception as e:
+            logger.exception("approve_category_rule_suggestion failed")
+            return self.err(str(e))
+
+    def reject_category_rule_suggestion(self, params=None) -> dict:
+        try:
+            data = self._category_suggestion_service().reject_suggestion(params or {})
+            return self.ok(data, 'AI 分类关键词建议已拒绝')
+        except Exception as e:
+            logger.exception("reject_category_rule_suggestion failed")
+            return self.err(str(e))

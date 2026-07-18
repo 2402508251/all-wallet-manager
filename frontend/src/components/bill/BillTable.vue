@@ -16,6 +16,14 @@
         </el-button>
         <el-button
           v-if="selectedIds.length > 0"
+          type="success"
+          size="small"
+          @click="handleGenerateCategorySuggestions"
+        >
+          AI 生成分类建议 ({{ selectedIds.length }})
+        </el-button>
+        <el-button
+          v-if="selectedIds.length > 0"
           type="primary"
           size="small"
           @click="handleBatchReassign"
@@ -150,7 +158,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['row-click', 'batch-delete', 'create'])
+const emit = defineEmits(['row-click', 'batch-delete', 'create', 'selection-change', 'generate-category-suggestions'])
 
 const billStore = useBillStore()
 const systemStore = useSystemStore()
@@ -165,6 +173,11 @@ const exporting = ref(false)
 
 function handleSelectionChange(rows) {
   selectedIds.value = rows.map(r => r.id)
+  emit('selection-change', { ids: selectedIds.value, rows })
+}
+
+function handleGenerateCategorySuggestions() {
+  emit('generate-category-suggestions', { ids: selectedIds.value, rows: props.bills.filter(row => selectedIds.value.includes(row.id)) })
 }
 
 function handleRowClick(row) {

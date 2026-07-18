@@ -1,1 +1,9 @@
-"""AI module infrastructure."""
+"""
+AI 模块基础设施。
+
+提供 AI 服务相关的核心功能：
+- AI Provider 配置管理
+- LLM 服务调用
+- 任务记录与追踪
+- 数据验证与安全控制
+"""

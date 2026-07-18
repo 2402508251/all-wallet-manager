@@ -37,6 +37,8 @@
       :loading="billStore.loading"
       @row-click="handleRowClick"
       @batch-delete="handleBatchDelete"
+      @selection-change="handleBillSelectionChange"
+      @generate-category-suggestions="openAiSuggestionDialog"
       @create="showCreateDialog = true"
     />
 
@@ -51,6 +53,36 @@
       @update="onDetailUpdated"
       @delete="onDetailDeleted"
     />
+
+    <el-dialog v-model="showAiSuggestionDialog" title="从选中账单生成分类关键词" width="920px" append-to-body>
+      <div v-if="!showAiSuggestionPanel" class="ai-category-picker">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          :title="`已选 ${selectedBillIds.length} 条账单。此操作仅生成分类关键词建议，不会修改已选账单。`"
+        />
+        <el-form label-width="90px" class="ai-category-form">
+          <el-form-item label="目标分类">
+            <el-select v-model="aiSuggestionCategoryId" placeholder="选择要生成规则的分类" style="width:100%">
+              <el-option v-for="category in enabledCategories" :key="category.id" :label="category.name" :value="category.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div class="ai-dialog-actions">
+          <el-button @click="showAiSuggestionDialog = false">取消</el-button>
+          <el-button type="primary" :disabled="!aiSuggestionCategoryId" @click="startAiSuggestionReview">开始审核</el-button>
+        </div>
+      </div>
+      <AiCategorySuggestionPanel
+        v-else
+        :category-id="aiSuggestionCategoryId"
+        :category-name="aiSuggestionCategoryName"
+        :bill-ids="selectedBillIds"
+        initial-sample-mode="selected_bills"
+        @applied="handleAiSuggestionApplied"
+      />
+    </el-dialog>
 
     <el-dialog v-model="showRecycleBin" title="回收站" width="900px" append-to-body>
       <el-table v-loading="recycleLoading" :data="deletedBills" size="small" empty-text="回收站为空">
@@ -77,30 +109,44 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { useBillStore } from '@/stores/bill'
+import { useSystemStore } from '@/stores/system'
 import BillFilter from '@/components/bill/BillFilter.vue'
 import BillTable from '@/components/bill/BillTable.vue'
 import BillCreateDialog from '@/components/bill/BillCreateDialog.vue'
 import BillDetailDrawer from '@/components/bill/BillDetailDrawer.vue'
+import AiCategorySuggestionPanel from '@/components/settings/AiCategorySuggestionPanel.vue'
 import { formatYuan } from '@/utils/formatters'
 
 const billStore = useBillStore()
+const systemStore = useSystemStore()
 const route = useRoute()
 const selectedBillId = ref(null)
+const selectedBillIds = ref([])
+const selectedBillRows = ref([])
+const showAiSuggestionDialog = ref(false)
+const showAiSuggestionPanel = ref(false)
+const aiSuggestionCategoryId = ref(null)
+const enabledCategories = computed(() => systemStore.categories.filter(category => category.is_enabled !== 0))
+const aiSuggestionCategoryName = computed(() => {
+  const category = systemStore.categories.find(item => item.id === aiSuggestionCategoryId.value)
+  return category?.name || ''
+})
 const showCreateDialog = ref(false)
 const showRecycleBin = ref(false)
 const deletedBills = ref([])
 const recycleLoading = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
   if (Object.keys(route.query).length > 0) {
     billStore.applyQueryFilter(route.query)
   }
   billStore.queryBills()
+  if (!systemStore.categories.length) await systemStore.loadCategories()
   if (route.query.recycle === '1') {
     showRecycleBin.value = true
   }
@@ -119,6 +165,37 @@ function handleReset() {
 
 function handleRowClick(row) {
   selectedBillId.value = row.id
+}
+
+function handleBillSelectionChange(payload) {
+  selectedBillIds.value = payload.ids || []
+  selectedBillRows.value = payload.rows || []
+}
+
+function openAiSuggestionDialog(payload) {
+  selectedBillIds.value = payload.ids || selectedBillIds.value
+  selectedBillRows.value = payload.rows || selectedBillRows.value
+  if (!selectedBillIds.value.length) {
+    ElMessage.error('请选择账单样本')
+    return
+  }
+  aiSuggestionCategoryId.value = null
+  showAiSuggestionPanel.value = false
+  showAiSuggestionDialog.value = true
+}
+
+function startAiSuggestionReview() {
+  if (!aiSuggestionCategoryId.value) {
+    ElMessage.error('请选择目标分类')
+    return
+  }
+  showAiSuggestionPanel.value = true
+}
+
+function handleAiSuggestionApplied() {
+  ElMessage.success('AI 分类关键词已应用；已选账单不会被自动修改')
+  showAiSuggestionDialog.value = false
+  showAiSuggestionPanel.value = false
 }
 
 async function handleBatchDelete(ids) {
@@ -197,6 +274,21 @@ watch(showRecycleBin, (val) => {
 </script>
 
 <style scoped>
+.ai-category-picker {
+  display: grid;
+  gap: var(--spacing-md);
+}
+
+.ai-category-form {
+  margin-top: var(--spacing-sm);
+}
+
+.ai-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
 .recycle-footer {
   display: flex;
   justify-content: space-between;

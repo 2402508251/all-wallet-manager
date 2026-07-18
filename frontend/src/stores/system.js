@@ -186,6 +186,31 @@ export const useSystemStore = defineStore('system', {
       return await call('recategorize_bill', { bill_id: billId })
     },
 
+    async generateCategoryRuleSuggestion(payload) {
+      return await call('generate_category_rule_suggestion', payload)
+    },
+
+    async listCategoryRuleSuggestions(options = {}) {
+      return await call('list_category_rule_suggestions', options)
+    },
+
+    async approveCategoryRuleSuggestion(suggestionId, selectedItems, reviewerNote = '', options = {}) {
+      const data = await call('approve_category_rule_suggestion', {
+        suggestion_id: suggestionId,
+        selected_items: selectedItems,
+        reviewer_note: reviewerNote,
+        allow_cross_category_conflicts: !!options.allowCrossCategoryConflicts,
+      })
+      return data
+    },
+
+    async rejectCategoryRuleSuggestion(suggestionId, reviewerNote = '') {
+      return await call('reject_category_rule_suggestion', {
+        suggestion_id: suggestionId,
+        reviewer_note: reviewerNote,
+      })
+    },
+
     // ─── 邮箱 ────────────────────────────
     async loadEmails() {
       const data = await call('get_email_configs', {})

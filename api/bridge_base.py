@@ -134,7 +134,16 @@ class BridgeBase:
             conditions.append("ub.category_id = ?")
             sql_params.append(filters['category_id'])
         if str(filters.get('is_uncategorized', '')).lower() in ('1', 'true'):
-            conditions.append("ub.category_id IS NULL")
+            from modules.categorizer import CategoryService
+            fallback_category_id = CategoryService(self.dal).get_other_expense_category_id()
+            if fallback_category_id is None:
+                conditions.append("ub.category_id IS NULL")
+            else:
+                conditions.append(
+                    "(ub.category_id IS NULL OR (ub.category_id = ? AND ub.category_source = 'auto' "
+                    "AND ub.category_rule_id IS NULL AND ub.is_category_manual_edited = 0))"
+                )
+                sql_params.append(fallback_category_id)
         if str(filters.get('is_internal_flow', '')).lower() in ('1', 'true'):
             conditions.append("ub.trade_type IN ('transfer_out', 'transfer_in', 'repayment', 'repayment_mirror')")
         if filters.get('keyword'):
